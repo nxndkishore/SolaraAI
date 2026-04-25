@@ -695,7 +695,7 @@ async function initRoofViewer(key) {
   document.getElementById('view-hint').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <div style="width:16px;height:16px;border:2px solid var(--amber);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
-      <span>Loading 3D tiles from Google Maps…</span>
+      <span>Loading 3D tiles from Google Maps… (may take 5–10 seconds)</span>
     </div>`;
 
   try {
@@ -707,7 +707,8 @@ async function initRoofViewer(key) {
       document.getElementById('topbar-context').textContent = geo.display.split(',').slice(0,2).join(',');
     }
 
-    // Photorealistic 3D Tiles: no createSession — load root.json directly with API key
+    // Use Cesium's built-in Google Photorealistic 3D Tiles helper
+    // This correctly handles tile request headers, attribution and credits
     if (!APP.viewer) {
       try { Cesium.Ion.defaultAccessToken = undefined; } catch(e){}
       APP.viewer = new Cesium.Viewer('cesium-container', {
@@ -717,13 +718,27 @@ async function initRoofViewer(key) {
         animation: false, timeline: false, fullscreenButton: false,
         infoBox: false, selectionIndicator: false, requestRenderMode: false
       });
-      APP.viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#e0e0e0');
+      APP.viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#1a1a1a');
+    } else {
+      // Clear any previously loaded tilesets when re-initializing
+      APP.viewer.scene.primitives.removeAll();
     }
 
-    const ts = await Cesium.Cesium3DTileset.fromUrl(
-      `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`
-    );
+    // createGooglePhotorealistic3DTileset is the correct API for v1.114+
+    // It appends the key and handles tile-level auth headers automatically
+    let ts;
+    if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
+      ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+    } else {
+      // Fallback for older Cesium builds
+      ts = await Cesium.Cesium3DTileset.fromUrl(
+        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`
+      );
+    }
     APP.viewer.scene.primitives.add(ts);
+
+    // Give tiles a moment to start loading before flying
+    await new Promise(res => setTimeout(res, 300));
 
     await new Promise(res => {
       APP.viewer.camera.flyTo({
@@ -735,8 +750,42 @@ async function initRoofViewer(key) {
 
     document.getElementById('view-hint').textContent = 'Navigate to the roof, then choose an analysis mode above.';
     setMode3D('navigate');
+
+    // Detect if tiles never load (blank black screen) after 8 seconds
+    setTimeout(() => {
+      const hint = document.getElementById('view-hint');
+      if (!hint) return;
+      const tilesLoaded = APP.viewer && APP.viewer.scene.primitives.length > 0;
+      if (hint.textContent.includes('Navigate') && APP.viewer) {
+        // Check if scene has rendered anything
+        const stats = APP.viewer.scene.frameState?.commandList?.length;
+        if (!stats) {
+          hint.innerHTML = `<div class="alert alert-warn">
+            ⚠️ Tiles may still be loading — if the view stays black, check that
+            <strong>Map Tiles API</strong> (not Maps JavaScript API) is enabled in
+            <a href="https://console.cloud.google.com/apis/library/tile.googleapis.com" target="_blank" style="color:var(--amber-dk)">Google Cloud Console</a>.
+            Also ensure billing is active on the project.
+          </div>`;
+        }
+      }
+    }, 8000);
+
   } catch(e) {
-    document.getElementById('view-hint').innerHTML = `<div class="alert alert-error">${e.message} — <button onclick="openSettings()" style="background:none;border:none;cursor:pointer;color:var(--red);text-decoration:underline">Check API key</button></div>`;
+    const hint = document.getElementById('view-hint');
+    let userMsg = e.message || 'Unknown error';
+    // Make Google API errors more readable
+    if (userMsg.includes('403') || userMsg.includes('REQUEST_DENIED')) {
+      userMsg = 'API key denied (403) — enable Map Tiles API and ensure billing is active in Google Cloud Console';
+    } else if (userMsg.includes('400') || userMsg.includes('INVALID_REQUEST')) {
+      userMsg = 'Invalid API key (400) — check the key was copied correctly';
+    }
+    if (hint) hint.innerHTML = `<div class="alert alert-error">
+      ${userMsg}
+      <div style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">
+        <button onclick="openSettings()" style="background:none;border:none;cursor:pointer;color:var(--red);text-decoration:underline;font-size:12px">Edit API key</button>
+        <a href="https://console.cloud.google.com/apis/library/tile.googleapis.com" target="_blank" style="color:var(--red);font-size:12px">Enable Map Tiles API →</a>
+      </div>
+    </div>`;
   }
 }
 
