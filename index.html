@@ -917,7 +917,7 @@ function setupClickHandler() {
     const g = pickRoof(APP.viewer, e.position);
     if (!g) {
       const hint = document.getElementById('view-hint');
-      if (hint) hint.innerHTML = '<span style="color:var(--amber)">⚠ Couldn't detect surface — try clicking closer to the roof centre, or zoom in more.</span>';
+      if (hint) hint.innerHTML = '<span style="color:var(--amber)">⚠ Could not detect surface — try clicking closer to the roof centre, or zoom in more.</span>';
       return;
     }
     // Save pitch+az, advance to polygon step
