@@ -1,4 +1,4 @@
-# ☀️ Solara — AI Solar System Designer
+# ☀️ Solara - AI Solar System Designer
 
 AI-powered residential solar system design using Google Photorealistic 3D Tiles, PVGIS JRC meteorological data, and Claude AI.
 
