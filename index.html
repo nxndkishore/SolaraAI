@@ -633,19 +633,6 @@ function render3D() {
   const r = APP.roofResult;
   const step = APP.roofStep || 1; // 1=click, 2=polygon, 3=done
 
-  // Step indicator
-  const stepBadge = (n, label, active, done) => `
-    <div style="display:flex;align-items:center;gap:6px">
-      <div style="width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;
-        display:flex;align-items:center;justify-content:center;flex-shrink:0;
-        background:${done?'var(--teal)':active?'var(--amber)':'var(--bg-secondary)'};
-        border:.5px solid ${done?'var(--teal)':active?'var(--amber)':'var(--border)'};
-        color:${done||active?'#fff':'var(--text-muted)'}">
-        ${done?'✓':n}
-      </div>
-      <span style="font-size:12px;font-weight:${active?600:400};color:${active?'var(--text)':done?'var(--teal-dk)':'var(--text-muted)'}">${label}</span>
-    </div>`;
-
   return `
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
       <div>
@@ -655,84 +642,54 @@ function render3D() {
       <button class="btn btn-ghost btn-sm" onclick="setPage('home')">← Back to design</button>
     </div>
 
-    <!-- Step indicator -->
+    <!-- Step indicator — IDs used by patch3DStep() for surgical updates -->
     <div style="display:flex;align-items:center;gap:14px;margin-bottom:12px;padding:10px 14px;
       background:var(--bg-secondary);border-radius:8px;border:.5px solid var(--border-light)">
-      ${stepBadge(1,'Click a roof surface', step===1, step>1)}
-      <div style="flex:1;height:1px;background:${step>1?'var(--teal)':'var(--border)'}"></div>
-      ${stepBadge(2,'Draw roof outline', step===2, step>2)}
-      <div style="flex:1;height:1px;background:${step>2?'var(--teal)':'var(--border)'}"></div>
-      ${stepBadge(3,'Review & use', step===3, false)}
+      <div style="display:flex;align-items:center;gap:6px">
+        <div id="step-dot-1" style="width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--amber);border:.5px solid var(--amber);color:#fff">1</div>
+        <span id="step-label-1" style="font-size:12px;font-weight:600;color:var(--text)">Click a roof surface</span>
+      </div>
+      <div id="step-line-1" style="flex:1;height:1px;background:var(--border)"></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div id="step-dot-2" style="width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-secondary);border:.5px solid var(--border);color:var(--text-muted)">2</div>
+        <span id="step-label-2" style="font-size:12px;font-weight:400;color:var(--text-muted)">Draw roof outline</span>
+      </div>
+      <div id="step-line-2" style="flex:1;height:1px;background:var(--border)"></div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <div id="step-dot-3" style="width:22px;height:22px;border-radius:50%;font-size:11px;font-weight:600;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-secondary);border:.5px solid var(--border);color:var(--text-muted)">3</div>
+        <span id="step-label-3" style="font-size:12px;font-weight:400;color:var(--text-muted)">Review & use</span>
+      </div>
     </div>
 
-    <!-- Cesium viewport -->
+    <!-- Cesium viewport — this div must NEVER be destroyed while viewer is alive -->
     <div style="position:relative;border-radius:12px;overflow:hidden;border:.5px solid var(--border);box-shadow:var(--shadow)">
       <div id="cesium-container" style="width:100%;height:460px"></div>
       <div id="hover-float" style="position:absolute;bottom:14px;left:14px;z-index:100;pointer-events:none;display:none"></div>
       <div id="poly-float" style="position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:100;pointer-events:none;display:none;white-space:nowrap"></div>
-
-      <!-- Step 1 pitch/az overlay — shows after first click -->
-      ${step>1 && r ? `
-      <div style="position:absolute;top:12px;left:12px;z-index:100;pointer-events:none">
-        <div class="info-float" style="display:flex;gap:12px">
-          <span>⛰ <strong>${r.pitchDeg}°</strong> pitch</span>
-          <span>🧭 <strong>${azLabel(r.azimuthDeg)}</strong> (${r.azimuthDeg}°)</span>
-        </div>
-      </div>` : ''}
+      <!-- Pitch/az badge — patched in place by patch3DStep() -->
+      <div id="roof-pitch-badge" style="position:absolute;top:12px;left:12px;z-index:100;pointer-events:none;display:none;gap:12px" class="info-float"></div>
     </div>
 
-    <!-- Controls row -->
+    <!-- Controls -->
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 0">
-      <button class="btn btn-ghost btn-sm" id="btn-navigate-mode"
-        onclick="APP.roofStep=1;resetPolygon();APP.roofResult=null;setupClickHandler();updateHint();render()"
-        style="${step===1?'opacity:.4;cursor:not-allowed':''}" ${step===1?'disabled':''}>
+      <button class="btn btn-ghost btn-sm" id="btn-re-click" disabled
+        onclick="APP.roofStep=1;resetPolygon();APP.roofResult=null;patch3DStep();setupClickHandler();updateHint()">
         ↩ Re-click roof
       </button>
-      ${step===2 ? `
-        <button id="btn-finish-poly" class="btn btn-primary btn-sm" style="display:none" onclick="finishPolygon()">
-          ✓ Finish polygon
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick="resetPolygon()">Reset polygon</button>
-      ` : ''}
+      <button id="btn-finish-poly" class="btn btn-primary btn-sm" style="display:none" onclick="finishPolygon()">
+        ✓ Finish polygon
+      </button>
+      <button id="btn-reset-poly-ctrl" class="btn btn-ghost btn-sm" style="display:none" onclick="resetPolygon()">
+        Reset polygon
+      </button>
       <span style="margin-left:auto;font-size:11px;color:var(--text-muted)">Scroll=zoom · Drag=orbit</span>
     </div>
 
     <!-- Hint -->
     <div id="view-hint" class="card-sm" style="font-size:12px;line-height:1.65;margin-bottom:12px"></div>
 
-    <!-- Step 3: Final result card -->
-    ${step===3 && r ? `
-    <div class="card fade-in">
-      <div class="section-label" style="margin-bottom:14px">
-        Roof detected · ${r.lat}°N, ${r.lon}°E
-      </div>
-      <div class="grid4" style="margin-bottom:16px">
-        <div class="metric-card">
-          <div class="metric-val">${r.pitchDeg}°</div>
-          <div class="metric-lbl">Pitch</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val" style="font-size:16px">${azLabel(r.azimuthDeg)}</div>
-          <div class="metric-lbl">${r.azimuthDeg}° orientation</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val" style="color:var(--teal)">${r.area}m²</div>
-          <div class="metric-lbl">Roof area</div>
-        </div>
-        <div class="metric-card">
-          <div class="metric-val" style="color:var(--blue)">${r.modules}</div>
-          <div class="metric-lbl">Est. modules</div>
-        </div>
-      </div>
-      <div style="display:flex;gap:10px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="applyRoofResult()">
-          Use these values in solar design →
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick="APP.roofStep=1;APP.roofResult=null;resetPolygon();setupClickHandler();updateHint();render()">
-          Start over
-        </button>
-      </div>
-    </div>` : ''}
+    <!-- Result card — hidden until step 3, patched by patch3DStep() -->
+    <div id="roof-result-card" class="card" style="display:none"></div>
   `;
 }
 
@@ -895,6 +852,73 @@ function updateHint() {
   }
 }
 
+// Surgically patch 3D page DOM without re-rendering (which would kill Cesium viewer)
+function patch3DStep() {
+  const step = APP.roofStep || 1;
+  const r = APP.roofResult;
+
+  // 1. Update step indicator dots
+  const stepColors = ['teal', 'amber', 'bg-secondary'];
+  [1, 2, 3].forEach(n => {
+    const done = n < step, active = n === step;
+    const dot = document.getElementById('step-dot-' + n);
+    const label = document.getElementById('step-label-' + n);
+    const line = document.getElementById('step-line-' + n);
+    if (dot) {
+      dot.style.background = done ? 'var(--teal)' : active ? 'var(--amber)' : 'var(--bg-secondary)';
+      dot.style.border = '.5px solid ' + (done ? 'var(--teal)' : active ? 'var(--amber)' : 'var(--border)');
+      dot.style.color = (done || active) ? '#fff' : 'var(--text-muted)';
+      dot.textContent = done ? '✓' : String(n);
+    }
+    if (label) {
+      label.style.color = active ? 'var(--text)' : done ? 'var(--teal-dk)' : 'var(--text-muted)';
+      label.style.fontWeight = active ? '600' : '400';
+    }
+    if (line) line.style.background = done ? 'var(--teal)' : 'var(--border)';
+  });
+
+  // 2. Show/hide pitch+az overlay badge
+  const badge = document.getElementById('roof-pitch-badge');
+  if (badge) {
+    if (step > 1 && r) {
+      badge.style.display = 'flex';
+      badge.innerHTML = `<span>⛰ <strong>${r.pitchDeg}°</strong> pitch</span><span>🧭 <strong>${azLabel(r.azimuthDeg)}</strong> (${r.azimuthDeg}°)</span>`;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  // 3. Show/hide control buttons
+  const reClickBtn = document.getElementById('btn-re-click');
+  const finishBtn = document.getElementById('btn-finish-poly');
+  const resetBtn = document.getElementById('btn-reset-poly-ctrl');
+  if (reClickBtn) reClickBtn.disabled = step === 1;
+  if (finishBtn) finishBtn.style.display = step === 2 ? 'none' : 'none'; // shown by polygon handler when 3+ pts
+  if (resetBtn) resetBtn.style.display = step === 2 ? 'inline-flex' : 'none';
+
+  // 4. Show/hide result card (step 3)
+  const resultCard = document.getElementById('roof-result-card');
+  if (resultCard) {
+    if (step === 3 && r) {
+      resultCard.style.display = 'block';
+      resultCard.innerHTML = `
+        <div class="section-label" style="margin-bottom:14px">Roof detected · ${r.lat}°N, ${r.lon}°E</div>
+        <div class="grid4" style="margin-bottom:16px">
+          <div class="metric-card"><div class="metric-val">${r.pitchDeg}°</div><div class="metric-lbl">Pitch</div></div>
+          <div class="metric-card"><div class="metric-val" style="font-size:16px">${azLabel(r.azimuthDeg)}</div><div class="metric-lbl">${r.azimuthDeg}° orientation</div></div>
+          <div class="metric-card"><div class="metric-val" style="color:var(--teal)">${r.area}m²</div><div class="metric-lbl">Roof area</div></div>
+          <div class="metric-card"><div class="metric-val" style="color:var(--blue)">${r.modules}</div><div class="metric-lbl">Est. modules</div></div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="applyRoofResult()">Use these values in solar design →</button>
+          <button class="btn btn-ghost btn-sm" onclick="APP.roofStep=1;APP.roofResult=null;resetPolygon();patch3DStep();setupClickHandler();updateHint()">Start over</button>
+        </div>`;
+    } else {
+      resultCard.style.display = 'none';
+    }
+  }
+}
+
 function setupClickHandler() {
   // Step 1: single click → detect pitch/azimuth, then auto-advance to step 2
   clearHandlers3D();
@@ -911,7 +935,7 @@ function setupClickHandler() {
     }
   }, Cesium.ScreenSpaceEventType.MOUSE_MOVE);
 
-  // Click: capture pitch/az → advance to step 2
+  // Click: capture pitch/az → advance to step 2 WITHOUT re-rendering (would kill Cesium)
   APP.clickH = new Cesium.ScreenSpaceEventHandler(APP.viewer.scene.canvas);
   APP.clickH.setInputAction(e => {
     const g = pickRoof(APP.viewer, e.position);
@@ -920,12 +944,14 @@ function setupClickHandler() {
       if (hint) hint.innerHTML = '<span style="color:var(--amber)">⚠ Could not detect surface — try clicking closer to the roof centre, or zoom in more.</span>';
       return;
     }
-    // Save pitch+az, advance to polygon step
+    // Save result and advance step
     APP.roofResult = { ...g, area: null, modules: null, kwp: null, mode: 'flow' };
     APP.roofStep = 2;
-    render(); // re-render to show step 2 UI
-    // Small delay then set up polygon handler (render() recreates the DOM)
-    setTimeout(() => { setupPolygonHandler(); updateHint(); }, 50);
+
+    // Patch DOM directly — never call render() here as it destroys cesium-container
+    patch3DStep();
+    setupPolygonHandler();
+    updateHint();
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 }
 
@@ -1018,9 +1044,10 @@ function finishPolygon() {
     area, modules, kwp, mode: 'flow'
   };
   APP.roofStep = 3;
-  render();
+  // Patch DOM directly — calling render() would destroy the Cesium viewer
+  patch3DStep();
   setTimeout(() => {
-    const card = document.querySelector('#main .card.fade-in');
+    const card = document.getElementById('roof-result-card');
     if (card) card.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, 100);
 }
