@@ -695,7 +695,7 @@ async function initRoofViewer(key) {
   document.getElementById('view-hint').innerHTML = `
     <div style="display:flex;align-items:center;gap:10px">
       <div style="width:16px;height:16px;border:2px solid var(--amber);border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;flex-shrink:0"></div>
-      <span>Loading 3D tiles… (geocoding address & creating Google session)</span>
+      <span>Loading 3D tiles from Google Maps…</span>
     </div>`;
 
   try {
@@ -707,9 +707,7 @@ async function initRoofViewer(key) {
       document.getElementById('topbar-context').textContent = geo.display.split(',').slice(0,2).join(',');
     }
 
-    const session = await createGoogleSession(key);
-    APP.session = session;
-
+    // Photorealistic 3D Tiles: no createSession — load root.json directly with API key
     if (!APP.viewer) {
       try { Cesium.Ion.defaultAccessToken = undefined; } catch(e){}
       APP.viewer = new Cesium.Viewer('cesium-container', {
@@ -723,7 +721,7 @@ async function initRoofViewer(key) {
     }
 
     const ts = await Cesium.Cesium3DTileset.fromUrl(
-      `https://tile.googleapis.com/v1/3dtiles/root.json?session=${session.session}&key=${key}`
+      `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`
     );
     APP.viewer.scene.primitives.add(ts);
 
@@ -742,17 +740,7 @@ async function initRoofViewer(key) {
   }
 }
 
-async function createGoogleSession(key) {
-  const r = await fetch(`https://tile.googleapis.com/v1/createSession?key=${key}`, {
-    method: 'POST', headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({ mapType:'photorealistic', language:'en-US', region:'EU' })
-  });
-  if (!r.ok) {
-    const e = await r.json().catch(()=>({}));
-    throw new Error(e.error?.message || `Google API error ${r.status} — ensure Map Tiles API is enabled`);
-  }
-  return r.json();
-}
+// createGoogleSession removed — Photorealistic 3D Tiles uses key directly, no session needed
 
 function clearHandlers3D() {
   if(APP.clickH){APP.clickH.destroy();APP.clickH=null;}
@@ -1167,21 +1155,33 @@ Notes:
 - irr25Pct: 25-year IRR assuming 3% electricity price increase/yr`;
 
   const anthropicKey = getKey('anthropic');
-  const headers = {'Content-Type':'application/json'};
-  if (anthropicKey) headers['x-api-key'] = anthropicKey;
+  if (!anthropicKey) throw new Error('Anthropic API key not set — click "API Keys" in the top bar to add it');
 
   const r = await fetch('https://api.anthropic.com/v1/messages', {
-    method: 'POST', headers,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-api-key': anthropicKey },
     body: JSON.stringify({
       model: CLAUDE_MODEL, max_tokens: 2200,
       system: 'Expert German solar installer. Return ONLY valid compact JSON, no markdown, no explanation.',
       messages: [{role:'user', content: prompt}]
     })
   });
+
+  if (!r.ok) {
+    const errBody = await r.json().catch(() => ({}));
+    const msg = errBody.error?.message || `Anthropic API error ${r.status}`;
+    if (r.status === 401) throw new Error(`Invalid Anthropic API key — ${msg}`);
+    if (r.status === 429) throw new Error(`Anthropic rate limit hit — wait a moment and try again`);
+    throw new Error(`Anthropic API error: ${msg}`);
+  }
+
   const d = await r.json();
-  const txt = (d.content?.[0]?.text || '').replace(/```json?|```/g,'').trim();
+  if (d.error) throw new Error(`Anthropic error: ${d.error.message}`);
+
+  const txt = (d.content?.[0]?.text || '').replace(/\`\`\`json?|\`\`\`/g,'').trim();
+  if (!txt) throw new Error('AI returned an empty response — try again');
   try { return JSON.parse(txt); }
-  catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error('AI returned invalid JSON — check your Anthropic API key'); }
+  catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error('AI returned invalid JSON — this is a parsing error, please try again'); }
 }
 
 // ── RESULT ────────────────────────────────────────────────────
