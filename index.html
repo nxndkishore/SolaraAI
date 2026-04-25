@@ -364,6 +364,7 @@ const APP = {
   viewer: null, session: null,
   mode: 'navigate',
   polyPts: [], polyEntities: [], polyLine: null, polyFill: null,
+  modulePanels: [],  // Cesium entities for placed solar panels
   clickH: null, moveH: null,
   roofResult: null,
   roofStep: 1,   // 1=click roof, 2=draw polygon, 3=done
@@ -1021,8 +1022,131 @@ function resetPolygon() {
   APP.polyEntities.forEach(e=>APP.viewer&&APP.viewer.entities.remove(e)); APP.polyEntities=[];
   if(APP.polyLine){APP.viewer&&APP.viewer.entities.remove(APP.polyLine);APP.polyLine=null;}
   if(APP.polyFill){APP.viewer&&APP.viewer.entities.remove(APP.polyFill);APP.polyFill=null;}
+  // Remove placed panel entities
+  APP.modulePanels.forEach(e=>APP.viewer&&APP.viewer.entities.remove(e)); APP.modulePanels=[];
   const pf=document.getElementById('poly-float'); if(pf) pf.style.display='none';
   const fp=document.getElementById('btn-finish-poly'); if(fp) fp.style.display='none';
+}
+
+
+// ── Solar panel placement on 3D roof ────────────────────────────────────
+// Projects polygon into a local ENU plane, grids panel rectangles,
+// clips to polygon, then lifts each panel back to ECEF.
+function placePanelsOn3DRoof(polyPts, pitchDeg, azimuthDeg) {
+  if (!APP.viewer || polyPts.length < 3) return;
+
+  // Clear existing panels
+  APP.modulePanels.forEach(e => APP.viewer.entities.remove(e));
+  APP.modulePanels = [];
+
+  // Panel dimensions in metres (AIKO 475W: 1.134m × 1.762m)
+  const PW = 1.134, PH = 1.762, GAP = 0.05;
+  const STEP_W = PW + GAP, STEP_H = PH + GAP;
+
+  // --- Step 1: build local ENU frame at polygon centroid ---
+  const cx = polyPts.reduce((acc, p) =>
+    Cesium.Cartesian3.add(acc, p, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3()
+  );
+  Cesium.Cartesian3.divideByScalar(cx, polyPts.length, cx);
+
+  const tf = Cesium.Transforms.eastNorthUpToFixedFrame(cx);
+  const inv = Cesium.Matrix4.inverseTransformation(tf, new Cesium.Matrix4());
+
+  // --- Step 2: project all polygon pts into local ENU (x=E, y=N, z=up) ---
+  const local2D = polyPts.map(p => {
+    const l = Cesium.Matrix4.multiplyByPoint(inv, p, new Cesium.Cartesian3());
+    return { x: l.x, y: l.y, z: l.z };
+  });
+
+  // --- Step 3: find bounding box in local 2D ---
+  const xs = local2D.map(p => p.x), ys = local2D.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  // --- Step 4: point-in-polygon test (2D ray casting) ---
+  function pip(px, py) {
+    let inside = false;
+    const n = local2D.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = local2D[i].x, yi = local2D[i].y;
+      const xj = local2D[j].x, yj = local2D[j].y;
+      if (((yi > py) !== (yj > py)) &&
+          (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  // --- Step 5: interpolate Z at a local 2D point from polygon plane ---
+  // Fit plane z = a*x + b*y + c through the polygon points
+  let sumX=0,sumY=0,sumZ=0,sumXX=0,sumXY=0,sumYY=0,sumXZ=0,sumYZ=0;
+  const n = local2D.length;
+  local2D.forEach(p=>{
+    sumX+=p.x;sumY+=p.y;sumZ+=p.z;
+    sumXX+=p.x*p.x;sumXY+=p.x*p.y;sumYY+=p.y*p.y;
+    sumXZ+=p.x*p.z;sumYZ+=p.y*p.z;
+  });
+  // Simple least-squares plane fit
+  const det = sumXX*sumYY - sumXY*sumXY;
+  let planeA=0, planeB=0, planeC=sumZ/n;
+  if (Math.abs(det) > 1e-10) {
+    planeA = (sumXZ*sumYY - sumYZ*sumXY) / det;
+    planeB = (sumYZ*sumXX - sumXZ*sumXY) / det;
+    planeC = (sumZ - planeA*sumX - planeB*sumY) / n;
+  }
+  function localZ(x, y) { return planeA*x + planeB*y + planeC; }
+
+  // --- Step 6: lift a local 2D point back to ECEF ---
+  function toECEF(lx, ly) {
+    const lz = localZ(lx, ly);
+    const local = new Cesium.Cartesian3(lx, ly, lz);
+    return Cesium.Matrix4.multiplyByPoint(tf, local, new Cesium.Cartesian3());
+  }
+
+  // --- Step 7: grid panels and place those whose centre is inside polygon ---
+  let placed = 0;
+  const maxPanels = 200; // safety cap
+
+  for (let row = 0; placed < maxPanels; row++) {
+    const py = minY + STEP_H * row + PH / 2;
+    if (py > maxY) break;
+
+    for (let col = 0; placed < maxPanels; col++) {
+      const px = minX + STEP_W * col + PW / 2;
+      if (px > maxX) break;
+
+      // Check all 4 corners are inside (conservative placement — no partial panels)
+      const hw = PW / 2, hh = PH / 2;
+      const corners2D = [
+        [px - hw, py - hh], [px + hw, py - hh],
+        [px + hw, py + hh], [px - hw, py + hh]
+      ];
+      if (!corners2D.every(([cx2, cy2]) => pip(cx2, cy2))) continue;
+
+      // Build the 4 ECEF corners of this panel
+      const c3d = corners2D.map(([cx2, cy2]) => toECEF(cx2, cy2));
+
+      // Add as a Cesium polygon entity (blue solar panel)
+      const e = APP.viewer.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(c3d),
+          material: new Cesium.ColorMaterialProperty(
+            Cesium.Color.fromCssColorString('#2563EB').withAlpha(0.85)
+          ),
+          perPositionHeight: true,
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('#93C5FD'),
+          outlineWidth: 1
+        }
+      });
+      APP.modulePanels.push(e);
+      placed++;
+    }
+  }
+
+  return placed;
 }
 
 function finishPolygon() {
@@ -1046,6 +1170,15 @@ function finishPolygon() {
     area, modules, kwp, mode: 'flow'
   };
   APP.roofStep = 3;
+
+  // Place solar panels on the 3D roof surface
+  const placed = placePanelsOn3DRoof(
+    APP.polyPts,
+    APP.roofResult.pitchDeg,
+    APP.roofResult.azimuthDeg
+  );
+  if (placed !== undefined) APP.roofResult.modules = placed; // use actual placed count
+
   // Patch DOM directly — calling render() would destroy the Cesium viewer
   patch3DStep();
   setTimeout(() => {
