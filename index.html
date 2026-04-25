@@ -707,38 +707,49 @@ async function initRoofViewer(key) {
       document.getElementById('topbar-context').textContent = geo.display.split(',').slice(0,2).join(',');
     }
 
-    // Use Cesium's built-in Google Photorealistic 3D Tiles helper
-    // This correctly handles tile request headers, attribution and credits
+    // Init Cesium viewer — keep globe visible but hide it so depth buffer works
+    // globe:false causes black screens with Google 3D tiles due to depth sorting
     if (!APP.viewer) {
       try { Cesium.Ion.defaultAccessToken = undefined; } catch(e){}
       APP.viewer = new Cesium.Viewer('cesium-container', {
-        globe: false, skyBox: false, skyAtmosphere: false,
         baseLayerPicker: false, geocoder: false, homeButton: false,
         sceneModePicker: false, navigationHelpButton: false,
         animation: false, timeline: false, fullscreenButton: false,
-        infoBox: false, selectionIndicator: false, requestRenderMode: false
+        infoBox: false, selectionIndicator: false
       });
-      APP.viewer.scene.backgroundColor = Cesium.Color.fromCssColorString('#1a1a1a');
+      // Hide the globe visually — tiles replace it
+      APP.viewer.scene.globe.show = false;
+      APP.viewer.scene.skyBox.show = false;
+      APP.viewer.scene.skyAtmosphere.show = false;
+      APP.viewer.scene.backgroundColor = Cesium.Color.BLACK;
     } else {
-      // Clear any previously loaded tilesets when re-initializing
-      APP.viewer.scene.primitives.removeAll();
+      // Remove old tilesets, keep viewer alive
+      const prims = APP.viewer.scene.primitives;
+      for (let i = prims.length - 1; i >= 0; i--) {
+        if (prims.get(i) instanceof Cesium.Cesium3DTileset) prims.remove(prims.get(i));
+      }
     }
 
-    // createGooglePhotorealistic3DTileset is the correct API for v1.114+
-    // It appends the key and handles tile-level auth headers automatically
+    // Load Google Photorealistic 3D Tiles
+    // Try the high-level helper first (Cesium >= 1.114), fall back to fromUrl
     let ts;
-    if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
-      ts = await Cesium.createGooglePhotorealistic3DTileset(key);
-    } else {
-      // Fallback for older Cesium builds
+    try {
+      if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
+        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+      } else {
+        throw new Error('use fromUrl');
+      }
+    } catch(_) {
       ts = await Cesium.Cesium3DTileset.fromUrl(
-        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`
+        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
+        { maximumScreenSpaceError: 8 }
       );
     }
     APP.viewer.scene.primitives.add(ts);
+    APP.viewer.scene.globe.depthTestAgainstTerrain = false;
 
-    // Give tiles a moment to start loading before flying
-    await new Promise(res => setTimeout(res, 300));
+    // Brief pause so tiles start fetching before camera moves
+    await new Promise(res => setTimeout(res, 200));
 
     await new Promise(res => {
       APP.viewer.camera.flyTo({
@@ -834,9 +845,18 @@ function setupAnalyzeHandler() {
   APP.clickH = new Cesium.ScreenSpaceEventHandler(APP.viewer.scene.canvas);
   APP.clickH.setInputAction(e => {
     const g = pickRoof(APP.viewer, e.position);
-    if(!g){alert('No roof surface detected — try clicking on the roof tiles directly.');return;}
+    if(!g){
+      const hint = document.getElementById('view-hint');
+      if(hint) hint.innerHTML = '<span style="color:var(--amber)">⚠ Could not detect surface — try clicking closer to the centre of the roof, or zoom in more.</span>';
+      return;
+    }
     APP.roofResult = {...g, area:null, modules:null, kwp:null, mode:'single'};
     render();
+    // Scroll result card into view
+    setTimeout(() => {
+      const el = document.querySelector('#main .card.fade-in') || document.getElementById('view-hint');
+      if(el) el.scrollIntoView({behavior:'smooth', block:'start'});
+    }, 100);
   }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
   APP.moveH = new Cesium.ScreenSpaceEventHandler(APP.viewer.scene.canvas);
   APP.moveH.setInputAction(e => {
@@ -915,6 +935,10 @@ function finishPolygon() {
 function applyRoofResult() {
   const r = APP.roofResult;
   if(!r) return;
+  // Warn about flat roofs — azimuth unreliable, but area and position are fine
+  if(r.flatRoof) {
+    console.log('Flat roof detected — azimuth set to default south (180°)');
+  }
   APP.form.lat = r.lat; APP.form.lon = r.lon;
   APP.form.tilt = r.pitchDeg;
   APP.form.azimuth = r.azimuthDeg;
@@ -929,27 +953,52 @@ function applyRoofResult() {
 function pickRoof(v, screenPos) {
   const C0 = v.scene.pickPosition(screenPos);
   if(!C0) return null;
-  const D=18;
-  const C1=v.scene.pickPosition(new Cesium.Cartesian2(screenPos.x+D,screenPos.y));
-  const C2=v.scene.pickPosition(new Cesium.Cartesian2(screenPos.x,screenPos.y-D));
-  if(!C1||!C2) return null;
-  const e1=Cesium.Cartesian3.subtract(C1,C0,new Cesium.Cartesian3());
-  const e2=Cesium.Cartesian3.subtract(C2,C0,new Cesium.Cartesian3());
-  let n=Cesium.Cartesian3.cross(e1,e2,new Cesium.Cartesian3());
-  Cesium.Cartesian3.normalize(n,n);
-  const up=Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(C0,new Cesium.Cartesian3());
-  if(Cesium.Cartesian3.dot(n,up)<0) Cesium.Cartesian3.negate(n,n);
-  const tf=Cesium.Transforms.eastNorthUpToFixedFrame(C0);
-  const inv=Cesium.Matrix4.inverseTransformation(tf,new Cesium.Matrix4());
-  const local=Cesium.Matrix4.multiplyByPointAsVector(inv,n,new Cesium.Cartesian3());
-  Cesium.Cartesian3.normalize(local,local);
-  const pitchDeg=Math.round(Math.acos(Math.min(1,Math.abs(local.z)))*180/Math.PI);
-  let az=Math.atan2(local.x,local.y)*180/Math.PI;
-  if(az<0) az+=360;
-  const carto=Cesium.Cartographic.fromCartesian(C0);
-  return { cartesian:C0, lat:+Cesium.Math.toDegrees(carto.latitude).toFixed(5),
-    lon:+Cesium.Math.toDegrees(carto.longitude).toFixed(5),
-    pitchDeg, azimuthDeg:Math.round(az) };
+
+  const up = Cesium.Ellipsoid.WGS84.geodeticSurfaceNormal(C0, new Cesium.Cartesian3());
+  const tf = Cesium.Transforms.eastNorthUpToFixedFrame(C0);
+  const inv = Cesium.Matrix4.inverseTransformation(tf, new Cesium.Matrix4());
+
+  // Try multiple offset distances — flat roofs need larger offsets
+  let pitchDeg = 0, azimuthDeg = 180, gotNormal = false;
+  for (const D of [12, 22, 35, 50]) {
+    const C1 = v.scene.pickPosition(new Cesium.Cartesian2(screenPos.x+D, screenPos.y));
+    const C2 = v.scene.pickPosition(new Cesium.Cartesian2(screenPos.x, screenPos.y-D));
+    if (!C1 || !C2) continue;
+
+    const e1 = Cesium.Cartesian3.subtract(C1, C0, new Cesium.Cartesian3());
+    const e2 = Cesium.Cartesian3.subtract(C2, C0, new Cesium.Cartesian3());
+    // Skip if edge vectors are too tiny (same point returned)
+    if (Cesium.Cartesian3.magnitude(e1) < 0.01 || Cesium.Cartesian3.magnitude(e2) < 0.01) continue;
+
+    let n = Cesium.Cartesian3.cross(e1, e2, new Cesium.Cartesian3());
+    Cesium.Cartesian3.normalize(n, n);
+    if (Cesium.Cartesian3.dot(n, up) < 0) Cesium.Cartesian3.negate(n, n);
+
+    const local = Cesium.Matrix4.multiplyByPointAsVector(inv, n, new Cesium.Cartesian3());
+    Cesium.Cartesian3.normalize(local, local);
+
+    // Sanity check — local.z should be positive (pointing up)
+    if (local.z < 0.1) continue;
+
+    pitchDeg = Math.round(Math.acos(Math.min(1, Math.abs(local.z))) * 180 / Math.PI);
+    let az = Math.atan2(local.x, local.y) * 180 / Math.PI;
+    if (az < 0) az += 360;
+    azimuthDeg = Math.round(az);
+    gotNormal = true;
+    break;
+  }
+
+  // If normal estimation failed, still return position — assume flat roof (pitch=0)
+  // This handles flat rooftops where all offset samples land on the same plane
+  const carto = Cesium.Cartographic.fromCartesian(C0);
+  return {
+    cartesian: C0,
+    lat: +Cesium.Math.toDegrees(carto.latitude).toFixed(5),
+    lon: +Cesium.Math.toDegrees(carto.longitude).toFixed(5),
+    pitchDeg: gotNormal ? pitchDeg : 0,
+    azimuthDeg: gotNormal ? azimuthDeg : 180,
+    flatRoof: !gotNormal
+  };
 }
 
 function polyArea(pts) {
@@ -972,7 +1021,10 @@ const PROC_STEPS = ['Geocoding address','Fetching PVGIS solar data','Calculating
 
 function renderLoading() {
   const rows = PROC_STEPS.map((s,i) => {
-    const done=i<APP.loadStep, active=i===APP.loadStep, err=APP.loadErr&&active;
+    const errStep = APP.loadErrStep ?? -1;
+    const done = APP.loadErr ? i<errStep : i<APP.loadStep;
+    const active = APP.loadErr ? false : i===APP.loadStep;
+    const err = APP.loadErr && i===errStep;
     return `<div class="proc-row">
       <div class="proc-dot" style="background:${done?'var(--teal-lt)':active?'var(--amber-lt)':'var(--bg-secondary)'};
         border:.5px solid ${done?'var(--teal)':active?'var(--amber)':'var(--border)'}">
@@ -985,17 +1037,22 @@ function renderLoading() {
   }).join('');
   return `
     <div style="min-height:420px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px">
-      <div style="width:42px;height:42px;border:3px solid var(--amber-lt);border-top-color:var(--amber);border-radius:50%;animation:spin .9s linear infinite"></div>
-      <div style="width:100%;max-width:380px" class="card">${rows}</div>
-      ${APP.loadErr?`<div class="alert alert-error" style="max-width:380px;width:100%">
-        ${APP.loadErr}
-        <div style="margin-top:8px"><button class="btn btn-ghost btn-sm" onclick="setPage('home');APP.wizardStep=0" style="border-color:var(--red);color:var(--red)">← Back to inputs</button></div>
-      </div>`:''}
+      ${!APP.loadErr ? `<div style="width:42px;height:42px;border:3px solid var(--amber-lt);border-top-color:var(--amber);border-radius:50%;animation:spin .9s linear infinite"></div>` : ''}
+      <div style="width:100%;max-width:420px" class="card">${rows}</div>
+      ${APP.loadErr ? `
+        <div style="max-width:420px;width:100%;background:var(--red-lt);border:.5px solid var(--red);border-radius:12px;padding:16px 18px">
+          <div style="font-size:13px;font-weight:600;color:var(--red);margin-bottom:6px">⚠ ${APP.loadErr}</div>
+          <div style="font-size:12px;color:var(--red);opacity:.8;margin-bottom:12px">Check the error above, then go back and fix it.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-ghost btn-sm" onclick="setPage('home');APP.wizardStep=0" style="border-color:var(--red);color:var(--red)">← Back to inputs</button>
+            <button class="btn btn-ghost btn-sm" onclick="openSettings()" style="border-color:var(--red);color:var(--red)">🔑 API Keys</button>
+          </div>
+        </div>` : ''}
     </div>`;
 }
 
 async function runPipeline() {
-  APP.page='loading'; APP.loadStep=0; APP.loadErr=null; render();
+  APP.page='loading'; APP.loadStep=0; APP.loadErr=null; APP.loadErrStep=-1; render();
   try {
     const f = APP.form;
     let geo = {lat:f.lat,lon:f.lon,display:f.display,country:f.country,city:f.city};
@@ -1013,7 +1070,6 @@ async function runPipeline() {
     APP.loadStep=2; render();
 
     const mods = calcMods(f.roofArea,f.kwh,sy,f.selfSuf);
-    // Override with 3D-detected count if available
     if(f.detectedModules) { mods.rec=f.detectedModules; }
     APP.mods=mods;
     APP.loadStep=3; render();
@@ -1028,7 +1084,9 @@ async function runPipeline() {
     APP.tab='overview';
     setPage('result');
   } catch(e) {
-    APP.loadErr=e.message; render();
+    APP.loadErrStep = APP.loadStep; // remember WHICH step failed
+    APP.loadErr = e.message || 'Unknown error — check console for details';
+    render();
   }
 }
 
