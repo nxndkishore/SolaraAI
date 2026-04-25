@@ -893,7 +893,7 @@ function patch3DStep() {
   const finishBtn = document.getElementById('btn-finish-poly');
   const resetBtn = document.getElementById('btn-reset-poly-ctrl');
   if (reClickBtn) reClickBtn.disabled = step === 1;
-  if (finishBtn) finishBtn.style.display = step === 2 ? 'none' : 'none'; // shown by polygon handler when 3+ pts
+  // finishBtn visibility managed by polygon handler (shown when 3+ pts) — don't hide it here
   if (resetBtn) resetBtn.style.display = step === 2 ? 'inline-flex' : 'none';
 
   // 4. Show/hide result card (step 3)
@@ -901,6 +901,7 @@ function patch3DStep() {
   if (resultCard) {
     if (step === 3 && r) {
       resultCard.style.display = 'block';
+      resultCard.className = 'card fade-in';
       resultCard.innerHTML = `
         <div class="section-label" style="margin-bottom:14px">Roof detected · ${r.lat}°N, ${r.lon}°E</div>
         <div class="grid4" style="margin-bottom:16px">
@@ -1032,15 +1033,16 @@ function finishPolygon() {
   const kwp = +(modules*MOD_W/1000).toFixed(2);
   const cx = APP.polyPts.reduce((acc,p)=>Cesium.Cartesian3.add(acc,p,new Cesium.Cartesian3()),new Cesium.Cartesian3());
   Cesium.Cartesian3.divideByScalar(cx, APP.polyPts.length, cx);
-  const cScreen = Cesium.SceneTransforms.worldToWindowCoordinates(APP.viewer.scene, cx);
-  const geo = cScreen ? pickRoof(APP.viewer,cScreen) : null;
+  // Keep pitch/az from step 1 click — already captured in APP.roofResult
+  // SceneTransforms API removed in Cesium 1.117 so we skip the centroid re-pick
   const carto = Cesium.Cartographic.fromCartesian(cx);
+  const prevResult = APP.roofResult || {};
   APP.roofResult = {
     cartesian: cx,
     lat: +Cesium.Math.toDegrees(carto.latitude).toFixed(5),
     lon: +Cesium.Math.toDegrees(carto.longitude).toFixed(5),
-    pitchDeg: APP.roofResult?.pitchDeg ?? geo?.pitchDeg ?? 0,
-    azimuthDeg: APP.roofResult?.azimuthDeg ?? geo?.azimuthDeg ?? 180,
+    pitchDeg: prevResult.pitchDeg ?? 0,
+    azimuthDeg: prevResult.azimuthDeg ?? 180,
     area, modules, kwp, mode: 'flow'
   };
   APP.roofStep = 3;
