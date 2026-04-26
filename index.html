@@ -319,17 +319,8 @@
       </div>
     </div>
 
-    <div style="margin-bottom:14px">
-      <label class="field-label">Anthropic API Key
-        <span style="text-transform:none;font-size:10px;font-weight:400"> — for AI system design</span>
-      </label>
-      <div class="api-key-row">
-        <input type="password" id="setting-anthropic-key" placeholder="sk-ant-..." autocomplete="off">
-        <button class="btn-primary btn-sm" onclick="saveKey('anthropic')">Save</button>
-      </div>
-      <div class="field-hint">
-        <a href="https://console.anthropic.com/account/keys" target="_blank" rel="noopener" style="color:var(--amber)">Get an Anthropic API key →</a>
-      </div>
+    <div style="padding:11px 14px;background:var(--teal-lt);border:.5px solid var(--teal);border-radius:8px;font-size:12px;color:var(--teal-dk);margin-bottom:14px">
+      ✓ <strong>AI design is powered by Claude</strong> — no Anthropic key needed. The API is handled server-side.
     </div>
 
     <div id="key-save-confirm" style="display:none" class="alert alert-success">
@@ -337,7 +328,7 @@
     </div>
 
     <div class="card-sm" style="margin-top:14px;font-size:12px;line-height:1.65;color:var(--text-muted)">
-      🔒 Keys are stored in your browser's <code>localStorage</code> only. They are never sent to any server — all API calls are made directly from your browser to Google and Anthropic.
+      🔒 The Google Maps key is domain-restricted to this site. The Claude AI key is stored server-side and never exposed to the browser.
     </div>
   </div>
 </div>
@@ -386,7 +377,6 @@ function openSettings() {
   const el = document.getElementById('settings-overlay');
   el.style.display = 'flex';
   document.getElementById('setting-google-key').value = getKey('google');
-  document.getElementById('setting-anthropic-key').value = getKey('anthropic');
   document.getElementById('key-save-confirm').style.display = 'none';
 }
 function closeSettings() {
@@ -436,7 +426,7 @@ function renderHome() {
   let body = '';
   if (step === 0) {
     const hasLocation = !!(f.address || (f.lat && !isNaN(f.lat)));
-    const googleKey = getKey('google');
+    const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
     body = `
       <div class="page-title">Where is the property?</div>
       <p class="page-sub" style="margin-bottom:20px">Enter an address to geocode it automatically, or enter coordinates directly. We'll fetch real solar data from PVGIS JRC (European Commission).</p>
@@ -700,18 +690,8 @@ function render3D() {
 }
 
 function bind3D() {
-  const googleKey = getKey('google');
-  if (!googleKey) {
-    document.getElementById('main').innerHTML = `
-      <div class="card" style="text-align:center;padding:40px">
-        <div style="font-size:32px;margin-bottom:14px">🗝️</div>
-        <div style="font-size:15px;font-weight:500;margin-bottom:8px">Google Maps API Key Required</div>
-        <p class="page-sub" style="margin-bottom:20px">Add your key to enable photorealistic 3D building visualization.</p>
-        <button class="btn btn-primary" onclick="openSettings()">Add API Key</button>
-        <div style="margin-top:12px"><button class="btn btn-ghost btn-sm" onclick="setPage('home')">← Back</button></div>
-      </div>`;
-    return;
-  }
+  // Google key is embedded and domain-restricted to reonicnanda.vercel.app
+  const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
   initRoofViewer(googleKey);
 }
 
@@ -1628,17 +1608,9 @@ Notes:
 - monthly: Jan-Dec kWh matching ${geo.lat.toFixed(1)}° seasonal pattern
 - Make savingsEur and paybackYr realistic`;
 
-  const anthropicKey = getKey('anthropic');
-  if (!anthropicKey) throw new Error('Anthropic API key not set — click "API Keys" in the top bar to add it');
-
-  const r = await fetch('https://api.anthropic.com/v1/messages', {
+  const r = await fetch('/api/chat', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true'
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: CLAUDE_MODEL, max_tokens: 3500,
       system: 'Expert German solar installer generating multi-option proposals. Return ONLY valid compact JSON, no markdown.',
@@ -1648,10 +1620,9 @@ Notes:
 
   if (!r.ok) {
     const errBody = await r.json().catch(() => ({}));
-    const msg = errBody.error?.message || `Anthropic API error ${r.status}`;
-    if (r.status === 401) throw new Error(`Invalid Anthropic API key — ${msg}`);
-    if (r.status === 429) throw new Error(`Anthropic rate limit hit — wait a moment and try again`);
-    throw new Error(`Anthropic API error: ${msg}`);
+    const msg = errBody.error?.message || `API error ${r.status}`;
+    if (r.status === 429) throw new Error('Rate limit reached — please wait a moment and try again');
+    throw new Error(`Design generation failed: ${msg}`);
   }
 
   const d = await r.json();
@@ -1856,11 +1827,7 @@ async function sendChat(){
   if(inp) inp.value='';
   APP.chatLoading=true; render();
 
-  const anthropicKey=getKey('anthropic');
-  if(!anthropicKey){
-    APP.chat.push({role:'assistant',content:'Anthropic API key not set — click API Keys in the top bar.'});
-    APP.chatLoading=false; render(); return;
-  }
+
 
   // Build full current design context
   const activeOpt = APP.design?.options
@@ -1895,9 +1862,8 @@ Available products to swap in:
 Pricing: modules €185-220 installed, battery €400-500/kWh, inverter €1800-3500, heat pump €8500-15000, wallbox €800-1100, labour €150-250/module.`;
 
   try{
-    const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{
-      'Content-Type':'application/json','x-api-key':anthropicKey,
-      'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
+    const r=await fetch('/api/chat',{method:'POST',headers:{
+      'Content-Type':'application/json'},
       body:JSON.stringify({model:CLAUDE_MODEL, max_tokens:2500,
         system: systemPrompt,
         messages: APP.chat.map(m=>({role:m.role,content:m.content}))
