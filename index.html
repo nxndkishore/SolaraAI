@@ -460,7 +460,7 @@ function renderHome() {
       ${f.fromRoofAnalysis ? `<div class="alert alert-success">✓ Roof pitch, orientation and area auto-filled from 3D analysis.</div>` : ''}
       <div style="background:var(--bg-secondary);border:.5px solid var(--border-light);border-radius:8px;padding:11px 14px;font-size:11px;color:var(--text-muted);line-height:1.7;margin-top:8px">
         <span style="font-weight:600;color:var(--text)">📊 Trained on real projects</span> — product catalog and sizing rules derived from
-        <strong style="color:var(--amber)">1,277 actual German customer projects</strong>:
+        <strong style="color:var(--amber)"> actual German customer projects</strong>:
         Huawei, EcoFlow &amp; SAJ batteries · Vaillant heat pumps · Huawei &amp; EcoFlow inverters · AIKO 475W modules · median demand 4,500 kWh/yr
       </div>
       ${f.display ? `
@@ -544,31 +544,18 @@ function renderHome() {
 
 
   const canNext = [!!(f.address || f.lat), f.roofArea > 0, f.kwh > 0][step];
-  const _d = !canNext ? 'disabled' : '';
-  const _genSVG = '<svg width="14" height="14" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff"/><g stroke="#fff" stroke-width="1.8" stroke-linecap="round"><line x1="10" y1="1" x2="10" y2="3.5"/><line x1="10" y1="16.5" x2="10" y2="19"/><line x1="1" y1="10" x2="3.5" y2="10"/><line x1="16.5" y1="10" x2="19" y2="10"/><line x1="3.05" y1="3.05" x2="5.1" y2="5.1"/><line x1="14.9" y1="14.9" x2="16.95" y2="16.95"/><line x1="16.95" y1="3.05" x2="14.9" y2="5.1"/><line x1="5.1" y1="14.9" x2="3.05" y2="16.95"/></g></svg>';
-  let _cta, _footerRow = '', _extraBottom = '';
-  if (step === 0 && googleKey) {
-    _extraBottom = '<div style="margin-top:18px;padding-top:18px;border-top:.5px solid var(--border-light)">'
-      + '<button class="btn btn-primary" ' + _d + ' onclick="wizNext()" style="width:100%;padding:14px;font-size:15px;justify-content:center;gap:10px">&#127968; Analyse Roof in 3D</button>'
-      + '<div style="text-align:center;margin-top:10px">'
-      + '<button ' + _d + ' onclick="APP.wizardStep++;render()" style="background:none;border:none;cursor:pointer;font-size:12px;color:var(--text-muted);text-decoration:underline;padding:0">Skip map analysis and enter manually</button>'
-      + '</div></div>';
-    _footerRow = '';
-  } else if (step < 2) {
-    _cta = '<button class="btn btn-primary" ' + _d + ' onclick="wizNext()">Next &rarr;</button>';
-    _footerRow = '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;padding-top:18px;border-top:.5px solid var(--border-light)"><button class="btn btn-ghost" onclick="if(APP.wizardStep>0){APP.wizardStep--;render()}" ' + (step===0?'disabled':'') + '>← Back</button>' + _cta + '</div>';
-  } else {
-    _cta = '<button class="btn btn-primary" ' + _d + ' onclick="runPipeline()">' + _genSVG + ' Generate Design</button>';
-    _footerRow = '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;padding-top:18px;border-top:.5px solid var(--border-light)"><button class="btn btn-ghost" onclick="if(APP.wizardStep>0){APP.wizardStep--;render()}" ' + (step===0?'disabled':'') + '>← Back</button>' + _cta + '</div>';
-  }
 
   return `
     ${stepBar}
     ${stepNav}
     <div class="card">
       ${body}
-      ${_extraBottom}
-      ${_footerRow}
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-top:22px;padding-top:18px;border-top:.5px solid var(--border-light)">
+        <button class="btn btn-ghost" onclick="if(APP.wizardStep>0){APP.wizardStep--;render()}" ${step===0?'disabled':''}>← Back</button>
+        ${step < 2
+          ? '<button class="btn btn-primary" onclick="wizNext()" ' + (!canNext?'disabled':'') + '>Next →</button>'
+          : '<button class="btn btn-primary" onclick="runPipeline()" ' + (!canNext?'disabled':'') + '><svg width="14" height="14" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#fff"/><g stroke="#fff" stroke-width="1.8" stroke-linecap="round"><line x1="10" y1="1" x2="10" y2="3.5"/><line x1="10" y1="16.5" x2="10" y2="19"/><line x1="1" y1="10" x2="3.5" y2="10"/><line x1="16.5" y1="10" x2="19" y2="10"/><line x1="3.05" y1="3.05" x2="5.1" y2="5.1"/><line x1="14.9" y1="14.9" x2="16.95" y2="16.95"/><line x1="16.95" y1="3.05" x2="14.9" y2="5.1"/><line x1="5.1" y1="14.9" x2="3.05" y2="16.95"/></g></svg> Generate Design</button>'}
+      </div>
     </div>
     <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">
       Solar data from <span style="color:var(--amber)">PVGIS JRC</span> · AI design by <span style="color:var(--amber)">Claude AI</span> · 3D tiles by <span style="color:var(--amber)">Google</span>
@@ -586,8 +573,7 @@ async function wizNext() {
       try {
         const geo = await geocode(f.address);
         Object.assign(APP.form, geo);
-        // Always go to 3D (key is embedded)
-        setPage('roof3d');
+        render();
         return;
       } catch(e) { alert(e.message); return; }
     }
