@@ -888,7 +888,7 @@ function patch3DStep() {
   if (badge) {
     if (step > 1 && r) {
       badge.style.display = 'flex';
-      badge.innerHTML = `<span>⛰ <strong>${r.pitchDeg}°</strong> pitch</span><span>🧭 <strong>${azLabel(r.azimuthDeg)}</strong> (${r.azimuthDeg}°)</span>`;
+      badge.innerHTML = `<span>⛰ <strong>${r.pitchDeg}°</strong> pitch${r.flatRoof?' · flat':''}</span><span>🧭 <strong>${azLabel(r.azimuthDeg)}</strong> (${r.azimuthDeg}°) · from polygon</span>`;
     } else {
       badge.style.display = 'none';
     }
@@ -1154,6 +1154,51 @@ function placePanelsOn3DRoof(polyPts, pitchDeg, azimuthDeg) {
   return placed;
 }
 
+
+// Derive roof azimuth from polygon edges — reliable even on flat roofs.
+// Finds the longest edge, computes its perpendicular in ENU space.
+// For a pitched roof: longest edge = ridge or eave, perpendicular = downslope direction.
+// For a flat roof: longest edge = dominant facade orientation, perpendicular = best panel facing.
+function azimuthFromPolygon(pts) {
+  if (!pts || pts.length < 2) return null;
+
+  const tf = Cesium.Transforms.eastNorthUpToFixedFrame(pts[0]);
+  const inv = Cesium.Matrix4.inverseTransformation(tf, new Cesium.Matrix4());
+
+  // Project all polygon points to local ENU
+  const local = pts.map(p => {
+    const l = Cesium.Matrix4.multiplyByPoint(inv, p, new Cesium.Cartesian3());
+    return { x: l.x, y: l.y };
+  });
+
+  // Find longest edge
+  let maxLen = 0, bestEdge = null;
+  for (let i = 0; i < local.length; i++) {
+    const a = local[i], b = local[(i+1) % local.length];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.sqrt(dx*dx + dy*dy);
+    if (len > maxLen) { maxLen = len; bestEdge = {dx, dy}; }
+  }
+  if (!bestEdge) return null;
+
+  // Perpendicular to longest edge (rotate 90°) — gives the downslope/facing direction
+  // Two perpendiculars exist; pick the one closer to south (az 90–270)
+  const perp1 = { dx: -bestEdge.dy, dy:  bestEdge.dx };
+  const perp2 = { dx:  bestEdge.dy, dy: -bestEdge.dx };
+
+  function toAz(d) {
+    let az = Math.atan2(d.dx, d.dy) * 180 / Math.PI;
+    if (az < 0) az += 360;
+    return Math.round(az);
+  }
+
+  const az1 = toAz(perp1), az2 = toAz(perp2);
+  // Prefer the azimuth closer to south (180°) — panels prefer south-facing
+  const diff1 = Math.abs(((az1 - 180) + 180) % 360 - 180);
+  const diff2 = Math.abs(((az2 - 180) + 180) % 360 - 180);
+  return diff1 <= diff2 ? az1 : az2;
+}
+
 function finishPolygon() {
   if(APP.polyPts.length<3) return;
   clearHandlers3D(); // stop listening for more polygon clicks
@@ -1166,13 +1211,22 @@ function finishPolygon() {
   // SceneTransforms API removed in Cesium 1.117 so we skip the centroid re-pick
   const carto = Cesium.Cartographic.fromCartesian(cx);
   const prevResult = APP.roofResult || {};
+  const pitchDeg = prevResult.pitchDeg ?? 0;
+
+  // Always use polygon edge analysis for azimuth — it's more reliable than the
+  // normal-based estimate from a single click, regardless of roof pitch.
+  // The longest polygon edge = ridge/eave line → perpendicular = panel facing direction.
+  const polyAz = azimuthFromPolygon(APP.polyPts);
+  let azimuthDeg = polyAz ?? prevResult.azimuthDeg ?? 180;
+
   APP.roofResult = {
     cartesian: cx,
     lat: +Cesium.Math.toDegrees(carto.latitude).toFixed(5),
     lon: +Cesium.Math.toDegrees(carto.longitude).toFixed(5),
-    pitchDeg: prevResult.pitchDeg ?? 0,
-    azimuthDeg: prevResult.azimuthDeg ?? 180,
-    area, modules, kwp, mode: 'flow'
+    pitchDeg,
+    azimuthDeg,
+    area, modules, kwp, mode: 'flow',
+    flatRoof: pitchDeg < 8  // still track for UI labelling
   };
   APP.roofStep = 3;
 
@@ -1248,16 +1302,18 @@ function pickRoof(v, screenPos) {
     break;
   }
 
-  // If normal estimation failed, still return position — assume flat roof (pitch=0)
-  // This handles flat rooftops where all offset samples land on the same plane
+  // For flat/near-flat roofs (pitch < 8°), azimuth from normal is meaningless noise.
+  // The horizontal normal component is essentially zero, so atan2 returns garbage.
+  // We flag flatRoof=true and defer azimuth to polygon edge analysis in finishPolygon.
   const carto = Cesium.Cartographic.fromCartesian(C0);
+  const isFlatRoof = !gotNormal || pitchDeg < 8;
   return {
     cartesian: C0,
     lat: +Cesium.Math.toDegrees(carto.latitude).toFixed(5),
     lon: +Cesium.Math.toDegrees(carto.longitude).toFixed(5),
     pitchDeg: gotNormal ? pitchDeg : 0,
-    azimuthDeg: gotNormal ? azimuthDeg : 180,
-    flatRoof: !gotNormal
+    azimuthDeg: isFlatRoof ? 180 : azimuthDeg, // 180=south default until polygon analysis
+    flatRoof: isFlatRoof
   };
 }
 
