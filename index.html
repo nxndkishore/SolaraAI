@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SolaraAI Solar System Designer</title>
+<title>Solara — AI Solar System Designer</title>
 <meta name="description" content="AI-powered residential solar system design using Google 3D Tiles, PVGIS JRC data, and Claude AI.">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='7' fill='%23EF9F27'/><g stroke='%23EF9F27' stroke-width='2.5' stroke-linecap='round'><line x1='16' y1='2' x2='16' y2='6'/><line x1='16' y1='26' x2='16' y2='30'/><line x1='2' y1='16' x2='6' y2='16'/><line x1='26' y1='16' x2='30' y2='16'/><line x1='6.1' y1='6.1' x2='8.9' y2='8.9'/><line x1='23.1' y1='23.1' x2='25.9' y2='25.9'/><line x1='25.9' y1='6.1' x2='23.1' y2='8.9'/><line x1='8.9' y1='23.1' x2='6.1' y2='25.9'/></g></svg>">
 <script>window.CESIUM_BASE_URL='https://cdn.jsdelivr.net/npm/cesium@1.118.2/Build/Cesium/';</script>
@@ -285,7 +285,7 @@
     <div class="topbar-actions">
       <span class="topbar-badge">PVGIS JRC · Claude AI</span>
       <button class="btn-ghost btn-sm" onclick="openSettings()" style="display:flex;align-items:center;gap:5px">
-        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="#EF9F27" stroke-width="1.8">
+        <svg width="13" height="13" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
           <circle cx="10" cy="10" r="3"/><path d="M10 2v2M10 16v2M2 10h2M16 10h2M4.2 4.2l1.4 1.4M14.4 14.4l1.4 1.4M4.2 15.8l1.4-1.4M14.4 5.6l1.4-1.4"/>
         </svg>
         API Keys
@@ -364,11 +364,13 @@ const APP = {
   viewer: null, session: null,
   mode: 'navigate',
   polyPts: [], polyEntities: [], polyLine: null, polyFill: null,
+  modulePanels: [],  // Cesium entities for placed solar panels
   clickH: null, moveH: null,
   roofResult: null,
   roofStep: 1,   // 1=click roof, 2=draw polygon, 3=done
   // Design
   pvgis: null, sy: null, mods: null, design: null,
+  selectedOption: 'recommended', // which of the 3 options is active
   tab: 'overview',
   chat: [], chatLoading: false,
   chartInst: null,
@@ -411,7 +413,11 @@ function render() {
 
 function setPage(p) { APP.page = p; render(); }
 function setForm(k, v) { APP.form[k] = v; render(); }
-function setTab(t) { APP.tab = t; render(); }
+function setTab(t) {
+  APP.tab = t;
+  if (t !== 'refine') APP.designUpdated = null; // clear update indicator
+  render();
+}
 
 // ── HOME ──────────────────────────────────────────────────────
 function renderHome() {
@@ -439,12 +445,11 @@ function renderHome() {
           <strong>Google Maps API key found.</strong>
           <a href="#" onclick="setPage('roof3d');return false;" style="color:var(--teal-dk);margin-left:6px">→ Analyze roof in 3D first</a>
         </div>` : `
-        <div class="alert alert-info" style="margin-bottom:14px">
-          <div style="margin-bottom:14px;padding:11px 14px;background:#E0F2FE;border-radius:8px;border:.5px solid #BAE6FD;color:#0C1A2E;font-size:13px">
-  <strong>Want 3D roof analysis?</strong> Add your Google Maps API key in
-  <button onclick="openSettings()" style="background:none;border:none;cursor:pointer;color:#1D4ED8;font-weight:500;text-decoration:underline">API Keys</button>
-  to enable photorealistic 3D roof detection.
-</div>`}
+        <div style="margin-bottom:14px;padding:11px 14px;background:#E0F2FE;border-radius:8px;border:.5px solid #BAE6FD;color:#0C1A2E;font-size:13px">
+          <strong>Want 3D roof analysis?</strong> Add your Google Maps API key in
+          <button onclick="openSettings()" style="background:none;border:none;cursor:pointer;color:#1D4ED8;font-weight:500;text-decoration:underline">API Keys</button>
+          to enable photorealistic 3D roof detection.
+        </div>`}
       <div style="margin-bottom:14px">
         <label class="field-label">Property address</label>
         <input type="text" id="inp-address" value="${f.address}" placeholder="e.g. Alexanderplatz 1, 10178 Berlin, Germany"
@@ -567,7 +572,7 @@ function renderHome() {
       </div>
     </div>
     <div style="text-align:center;font-size:11px;color:var(--text-muted);margin-top:16px">
-      Solar data from <span style="color:var(--amber)">PVGIS JRC</span> · 3D tiles by <span style="color:var(--amber)">Google</span>
+      Solar data from <span style="color:var(--amber)">PVGIS JRC</span> · AI design by <span style="color:var(--amber)">Claude AI</span> · 3D tiles by <span style="color:var(--amber)">Google</span>
     </div>
   `;
 }
@@ -1022,8 +1027,131 @@ function resetPolygon() {
   APP.polyEntities.forEach(e=>APP.viewer&&APP.viewer.entities.remove(e)); APP.polyEntities=[];
   if(APP.polyLine){APP.viewer&&APP.viewer.entities.remove(APP.polyLine);APP.polyLine=null;}
   if(APP.polyFill){APP.viewer&&APP.viewer.entities.remove(APP.polyFill);APP.polyFill=null;}
+  // Remove placed panel entities
+  APP.modulePanels.forEach(e=>APP.viewer&&APP.viewer.entities.remove(e)); APP.modulePanels=[];
   const pf=document.getElementById('poly-float'); if(pf) pf.style.display='none';
   const fp=document.getElementById('btn-finish-poly'); if(fp) fp.style.display='none';
+}
+
+
+// ── Solar panel placement on 3D roof ────────────────────────────────────
+// Projects polygon into a local ENU plane, grids panel rectangles,
+// clips to polygon, then lifts each panel back to ECEF.
+function placePanelsOn3DRoof(polyPts, pitchDeg, azimuthDeg) {
+  if (!APP.viewer || polyPts.length < 3) return;
+
+  // Clear existing panels
+  APP.modulePanels.forEach(e => APP.viewer.entities.remove(e));
+  APP.modulePanels = [];
+
+  // Panel dimensions in metres (AIKO 475W: 1.134m × 1.762m)
+  const PW = 1.134, PH = 1.762, GAP = 0.05;
+  const STEP_W = PW + GAP, STEP_H = PH + GAP;
+
+  // --- Step 1: build local ENU frame at polygon centroid ---
+  const cx = polyPts.reduce((acc, p) =>
+    Cesium.Cartesian3.add(acc, p, new Cesium.Cartesian3()),
+    new Cesium.Cartesian3()
+  );
+  Cesium.Cartesian3.divideByScalar(cx, polyPts.length, cx);
+
+  const tf = Cesium.Transforms.eastNorthUpToFixedFrame(cx);
+  const inv = Cesium.Matrix4.inverseTransformation(tf, new Cesium.Matrix4());
+
+  // --- Step 2: project all polygon pts into local ENU (x=E, y=N, z=up) ---
+  const local2D = polyPts.map(p => {
+    const l = Cesium.Matrix4.multiplyByPoint(inv, p, new Cesium.Cartesian3());
+    return { x: l.x, y: l.y, z: l.z };
+  });
+
+  // --- Step 3: find bounding box in local 2D ---
+  const xs = local2D.map(p => p.x), ys = local2D.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+
+  // --- Step 4: point-in-polygon test (2D ray casting) ---
+  function pip(px, py) {
+    let inside = false;
+    const n = local2D.length;
+    for (let i = 0, j = n - 1; i < n; j = i++) {
+      const xi = local2D[i].x, yi = local2D[i].y;
+      const xj = local2D[j].x, yj = local2D[j].y;
+      if (((yi > py) !== (yj > py)) &&
+          (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  // --- Step 5: interpolate Z at a local 2D point from polygon plane ---
+  // Fit plane z = a*x + b*y + c through the polygon points
+  let sumX=0,sumY=0,sumZ=0,sumXX=0,sumXY=0,sumYY=0,sumXZ=0,sumYZ=0;
+  const n = local2D.length;
+  local2D.forEach(p=>{
+    sumX+=p.x;sumY+=p.y;sumZ+=p.z;
+    sumXX+=p.x*p.x;sumXY+=p.x*p.y;sumYY+=p.y*p.y;
+    sumXZ+=p.x*p.z;sumYZ+=p.y*p.z;
+  });
+  // Simple least-squares plane fit
+  const det = sumXX*sumYY - sumXY*sumXY;
+  let planeA=0, planeB=0, planeC=sumZ/n;
+  if (Math.abs(det) > 1e-10) {
+    planeA = (sumXZ*sumYY - sumYZ*sumXY) / det;
+    planeB = (sumYZ*sumXX - sumXZ*sumXY) / det;
+    planeC = (sumZ - planeA*sumX - planeB*sumY) / n;
+  }
+  function localZ(x, y) { return planeA*x + planeB*y + planeC; }
+
+  // --- Step 6: lift a local 2D point back to ECEF ---
+  function toECEF(lx, ly) {
+    const lz = localZ(lx, ly);
+    const local = new Cesium.Cartesian3(lx, ly, lz);
+    return Cesium.Matrix4.multiplyByPoint(tf, local, new Cesium.Cartesian3());
+  }
+
+  // --- Step 7: grid panels and place those whose centre is inside polygon ---
+  let placed = 0;
+  const maxPanels = 200; // safety cap
+
+  for (let row = 0; placed < maxPanels; row++) {
+    const py = minY + STEP_H * row + PH / 2;
+    if (py > maxY) break;
+
+    for (let col = 0; placed < maxPanels; col++) {
+      const px = minX + STEP_W * col + PW / 2;
+      if (px > maxX) break;
+
+      // Check all 4 corners are inside (conservative placement — no partial panels)
+      const hw = PW / 2, hh = PH / 2;
+      const corners2D = [
+        [px - hw, py - hh], [px + hw, py - hh],
+        [px + hw, py + hh], [px - hw, py + hh]
+      ];
+      if (!corners2D.every(([cx2, cy2]) => pip(cx2, cy2))) continue;
+
+      // Build the 4 ECEF corners of this panel
+      const c3d = corners2D.map(([cx2, cy2]) => toECEF(cx2, cy2));
+
+      // Add as a Cesium polygon entity (blue solar panel)
+      const e = APP.viewer.entities.add({
+        polygon: {
+          hierarchy: new Cesium.PolygonHierarchy(c3d),
+          material: new Cesium.ColorMaterialProperty(
+            Cesium.Color.fromCssColorString('#2563EB').withAlpha(0.85)
+          ),
+          perPositionHeight: true,
+          outline: true,
+          outlineColor: Cesium.Color.fromCssColorString('#93C5FD'),
+          outlineWidth: 1
+        }
+      });
+      APP.modulePanels.push(e);
+      placed++;
+    }
+  }
+
+  return placed;
 }
 
 function finishPolygon() {
@@ -1047,6 +1175,15 @@ function finishPolygon() {
     area, modules, kwp, mode: 'flow'
   };
   APP.roofStep = 3;
+
+  // Place solar panels on the 3D roof surface
+  const placed = placePanelsOn3DRoof(
+    APP.polyPts,
+    APP.roofResult.pitchDeg,
+    APP.roofResult.azimuthDeg
+  );
+  if (placed !== undefined) APP.roofResult.modules = placed; // use actual placed count
+
   // Patch DOM directly — calling render() would destroy the Cesium viewer
   patch3DStep();
   setTimeout(() => {
@@ -1202,8 +1339,11 @@ async function runPipeline() {
     APP.loadStep=4; render();
     await new Promise(r=>setTimeout(r,400));
 
-    const kwp = design.system?.pvModules?.totalKwp||(mods.rec*MOD_W/1000).toFixed(1);
-    APP.chat=[{role:'assistant',content:`Your ${kwp} kWp system is designed! Ask me to adjust battery capacity, add a heat pump, optimise for self-sufficiency, or change any component.`}];
+    // design.options is the new multi-option format
+    const recOpt = design.options?.find(o=>o.id==='recommended') || design.options?.[0];
+    const kwp = recOpt?.system?.pvModules?.totalKwp || (mods.rec*MOD_W/1000).toFixed(1);
+    APP.selectedOption = 'recommended';
+    APP.chat=[{role:'assistant',content:`I've generated 3 options for your ${APP.form.city||'project'} — Essential, Recommended, and Premium. The Recommended option is a ${kwp} kWp system. Ask me to adjust any option, add components, or explain the differences.`}];
     APP.tab='overview';
     setPage('result');
   } catch(e) {
@@ -1232,47 +1372,66 @@ async function fetchPVGIS(lat,lon,tilt,az){
 
 function latYield(lat){return lat<44?1280:lat<47?1130:lat<50?1020:lat<53?930:lat<56?860:800;}
 
-// ── Real product catalog derived from 1,277 actual customer projects ──
+// ── Real product catalog — merged from 1,619 actual signed German projects ──
+// Dataset 1 (1,277 projects): Huawei/EcoFlow/Vaillant era
+// Dataset 2 (342 signed projects, 2025): Sigenergy now dominant brand
 const CATALOG = {
-  // Batteries: Huawei & EcoFlow dominate (~93% of 1,488 battery line items)
+  // Standard packages — how real proposals are structured (complete bundles)
+  packages: [
+    {name:'Complete Package 1 Sigenergy 6.3kWp + 6kWh',   brand:'Sigenergy', kwp:6.3,  batKwh:6,  eurEst:14500},
+    {name:'Complete Package 2 Sigenergy 10.8kWp + 9kWh',  brand:'Sigenergy', kwp:10.8, batKwh:9,  eurEst:22000},
+    {name:'Complete Package 3 Sigenergy 13.5kWp + 9kWh',  brand:'Sigenergy', kwp:13.5, batKwh:9,  eurEst:26500},
+    {name:'Complete Package 4 Sigenergy 18kWp + 9kWh',    brand:'Sigenergy', kwp:18.0, batKwh:9,  eurEst:33000},
+    {name:'Complete Package 1 GoodWe 6.3kWp + 5kWh',      brand:'GoodWe',    kwp:6.3,  batKwh:5,  eurEst:13500},
+    {name:'Complete Package 2 GoodWe 10.8kWp + 10kWh',    brand:'GoodWe',    kwp:10.8, batKwh:10, eurEst:21500},
+    {name:'Complete Package 3 GoodWe 14.85kWp + 15kWh',   brand:'GoodWe',    kwp:14.85,batKwh:15, eurEst:29000},
+    {name:'Complete Package 2 FoxESS 10.8kWp + 10kWh',    brand:'FoxESS',    kwp:10.8, batKwh:10, eurEst:21000},
+    {name:'Complete Package 3 FoxESS 15.3kWp + 15kWh',    brand:'FoxESS',    kwp:15.3, batKwh:15, eurEst:28500},
+  ],
+  // Batteries (individual — for custom configs)
   batteries: [
-    {name:'Battery 5kWh',       brand:'Huawei',  kwh:5,   chemistry:'LiNMC', cycles:6000, eurEst:2200},
-    {name:'Battery 7kWh',       brand:'Huawei',  kwh:7,   chemistry:'LiNMC', cycles:6000, eurEst:2900},
-    {name:'Battery 10kWh',      brand:'Huawei',  kwh:10,  chemistry:'LiNMC', cycles:6000, eurEst:3800},
-    {name:'Battery 14kWh',      brand:'Huawei',  kwh:14,  chemistry:'LiNMC', cycles:6000, eurEst:5100},
-    {name:'Battery 21kWh',      brand:'Huawei',  kwh:21,  chemistry:'LiNMC', cycles:6000, eurEst:7200},
-    {name:'Battery LFP 5kWh',   brand:'EcoFlow', kwh:5,   chemistry:'LFP',   cycles:3500, eurEst:2000},
-    {name:'Battery LFP 10kWh',  brand:'EcoFlow', kwh:10,  chemistry:'LFP',   cycles:3500, eurEst:3600},
-    {name:'Battery LFP 15kWh',  brand:'EcoFlow', kwh:15,  chemistry:'LFP',   cycles:3500, eurEst:5200},
-    {name:'Battery 10kWh Pro',  brand:'SAJ',     kwh:10,  chemistry:'LFP',   cycles:6000, eurEst:3700},
-    {name:'Battery 15kWh Pro',  brand:'SAJ',     kwh:15,  chemistry:'LFP',   cycles:6000, eurEst:5300},
+    {name:'AIOS Battery 6kWh',   brand:'Sigenergy', kwh:6,   chemistry:'LFP', cycles:6000, eurEst:2600},
+    {name:'AIOS Battery 9kWh',   brand:'Sigenergy', kwh:9,   chemistry:'LFP', cycles:6000, eurEst:3600},
+    {name:'AIOS Battery 12kWh',  brand:'Sigenergy', kwh:12,  chemistry:'LFP', cycles:6000, eurEst:4800},
+    {name:'Battery 5kWh',        brand:'GoodWe',    kwh:5,   chemistry:'LFP', cycles:6000, eurEst:2200},
+    {name:'Battery 10kWh',       brand:'GoodWe',    kwh:10,  chemistry:'LFP', cycles:6000, eurEst:4000},
+    {name:'Battery 5kWh L3',     brand:'FoxESS',    kwh:5,   chemistry:'LFP', cycles:6000, eurEst:2100},
+    {name:'Battery 10kWh',       brand:'EcoFlow',   kwh:10,  chemistry:'LFP', cycles:3500, eurEst:3600},
+    {name:'Battery 15kWh',       brand:'EcoFlow',   kwh:15,  chemistry:'LFP', cycles:3500, eurEst:5200},
+    {name:'Battery 10kWh',       brand:'Huawei',    kwh:10,  chemistry:'LiNMC',cycles:6000,eurEst:3800},
+    {name:'Battery 14kWh',       brand:'Huawei',    kwh:14,  chemistry:'LiNMC',cycles:6000,eurEst:5100},
   ],
-  // Inverters: Huawei Hybrid is standard; EcoFlow for EcoFlow systems
+  // Inverters
   inverters: [
-    {name:'Hybrid Inverter 5kW',  brand:'Huawei',  kw:5,  effPct:98.6, eurEst:1800},
-    {name:'Hybrid Inverter 6kW',  brand:'Huawei',  kw:6,  effPct:98.6, eurEst:2000},
-    {name:'Hybrid Inverter 12kW', brand:'Huawei',  kw:12, effPct:98.6, eurEst:3200},
-    {name:'Hybrid Inverter 6kW',  brand:'EcoFlow', kw:6,  effPct:97.6, eurEst:1900},
-    {name:'Hybrid Inverter 15kW', brand:'EcoFlow', kw:15, effPct:97.6, eurEst:3500},
+    {name:'Hybrid Inverter 5kW',  brand:'Sigenergy', kw:5,  effPct:98.4, eurEst:1700},
+    {name:'Hybrid Inverter 10kW', brand:'Sigenergy', kw:10, effPct:98.4, eurEst:2400},
+    {name:'Hybrid Inverter 20kW', brand:'Sigenergy', kw:20, effPct:98.4, eurEst:3800},
+    {name:'Hybrid Inverter 10kW', brand:'GoodWe',    kw:10, effPct:97.8, eurEst:2200},
+    {name:'Hybrid Inverter 6kW',  brand:'EcoFlow',   kw:6,  effPct:97.6, eurEst:1900},
+    {name:'Hybrid Inverter 6kW',  brand:'Huawei',    kw:6,  effPct:98.6, eurEst:2000},
+    {name:'Hybrid Inverter 12kW', brand:'Huawei',    kw:12, effPct:98.6, eurEst:3200},
   ],
-  // Heat pumps: 100% Vaillant in dataset (31/31), with some Aira
+  // Heat pumps (Vaillant dominant in dataset 1; dataset 2 customers already have heat pumps)
   heatPumps: [
-    {name:'Heat Pump 5.5kW 230V',  brand:'Vaillant', kw:5.5,  cop:3.8, type:'Air-to-Water', volt:'230V', eurEst:8500},
-    {name:'Heat Pump 7.5kW 230V',  brand:'Vaillant', kw:7.5,  cop:3.8, type:'Air-to-Water', volt:'230V', eurEst:10200},
-    {name:'Heat Pump 10.5kW 400V', brand:'Vaillant', kw:10.5, cop:3.7, type:'Air-to-Water', volt:'400V', eurEst:12800},
-    {name:'Heat Pump 12.5kW 400V', brand:'Vaillant', kw:12.5, cop:3.6, type:'Air-to-Water', volt:'400V', eurEst:14500},
-    {name:'Heat Pump 8kW',         brand:'Aira',     kw:8.0,  cop:4.1, type:'Air-to-Water', volt:'230V', eurEst:9800},
+    {name:'Heat Pump 5.5kW 230V',  brand:'Vaillant', kw:5.5,  cop:3.8, type:'Air-to-Water', eurEst:8500},
+    {name:'Heat Pump 7.5kW 230V',  brand:'Vaillant', kw:7.5,  cop:3.8, type:'Air-to-Water', eurEst:10200},
+    {name:'Heat Pump 10.5kW 400V', brand:'Vaillant', kw:10.5, cop:3.7, type:'Air-to-Water', eurEst:12800},
+    {name:'Heat Pump 12.5kW 400V', brand:'Vaillant', kw:12.5, cop:3.6, type:'Air-to-Water', eurEst:14500},
+    {name:'Heat Pump 8kW',         brand:'Aira',     kw:8.0,  cop:4.1, type:'Air-to-Water', eurEst:9800},
   ],
-  // Wallboxes
+  // Wallboxes (Sigenergy 11kW now most common, 22kW for high-power)
   wallboxes: [
-    {name:'Wallbox 22kW',    brand:'Huawei',  kw:22, eurEst:1100},
-    {name:'Wallbox 11kW',    brand:'EcoFlow', kw:11, eurEst:850},
-    {name:'Wallbox 22kW v2', brand:'EcoFlow', kw:22, eurEst:1050},
-    {name:'Smart Charger 2', brand:'Smartfox',kw:11, eurEst:900},
+    {name:'AC Wallbox 11kW', brand:'Sigenergy', kw:11, eurEst:850},
+    {name:'AC Wallbox 22kW', brand:'Sigenergy', kw:22, eurEst:1050},
+    {name:'Wallbox 11kW',    brand:'FoxESS',    kw:11, eurEst:800},
+    {name:'EV Charger 11kW', brand:'GoodWe',    kw:11, eurEst:820},
+    {name:'Wallbox 11kW',    brand:'EcoFlow',   kw:11, eurEst:850},
+    {name:'Wallbox 22kW',    brand:'Huawei',    kw:22, eurEst:1100},
   ],
-  // PV modules (inferred from accessories — most common in dataset)
+  // PV modules
   modules: [
     {name:'PV Module 475W', brand:'AIKO',  watt:475, effPct:22.8, eurEst:220},
+    {name:'PV Module 463W TOPCon Glass-Glass', brand:'Generic', watt:463, effPct:22.1, eurEst:200},
     {name:'PV Module 455W', brand:'Trina', watt:455, effPct:21.4, eurEst:195},
     {name:'PV Module 430W', brand:'Longi', watt:430, effPct:21.3, eurEst:185},
   ]
@@ -1319,70 +1478,99 @@ function pickHeatPump(houseSize, heatingDemandKwh) {
 async function aiDesign({geo, pv, sy, mods, form}) {
   const kwp = (mods.rec * MOD_W / 1000).toFixed(2);
   const pvSrc = pv
-    ? `PVGIS JRC: ${pv.outputs?.totals?.fixed?.E_y?.toFixed(0)} kWh/kWp/yr, irradiation ${pv.outputs?.totals?.fixed?.['H(i)_y']?.toFixed(0)} kWh/m²/yr`
+    ? `PVGIS JRC: ${pv.outputs?.totals?.fixed?.E_y?.toFixed(0)} kWh/kWp/yr`
     : `Estimated (latitude-based): ~${sy} kWh/kWp/yr`;
 
-  // Pre-select products using real sizing rules
-  const recBat = pickBattery(form.kwh, form.selfSuf, form.budget);
-  const recInv = pickInverter(parseFloat(kwp));
   const needsHP = ['gas','oil','OtherNonRenewable'].includes(form.heating);
-  const recHP = needsHP ? pickHeatPump(null, form.kwh * 0.8) : null;
-  const recWB = form.ev ? CATALOG.wallboxes[0] : null; // Huawei 22kW default
-  const recMod = CATALOG.modules[0]; // AIKO 475W
 
-  const catalogJson = JSON.stringify({
-    batteries: CATALOG.batteries.map(b=>({name:b.name,brand:b.brand,kwh:b.kwh,chemistry:b.chemistry,cycles:b.cycles})),
-    inverters: CATALOG.inverters.map(i=>({name:i.name,brand:i.brand,kw:i.kw,effPct:i.effPct})),
-    heatPumps: CATALOG.heatPumps.map(h=>({name:h.name,brand:h.brand,kw:h.kw,cop:h.cop,type:h.type})),
-    wallboxes: CATALOG.wallboxes.map(w=>({name:w.name,brand:w.brand,kw:w.kw})),
-    modules: CATALOG.modules
-  }, null, 0);
-
-  const prompt = `You are an expert residential solar system designer for Germany.
-Design a complete system using ONLY products from the provided catalog (derived from 1,277 real German customer projects).
+  const prompt = `You are an expert German solar installer generating a 3-option proposal.
+Real data: 342 recently signed German projects show Sigenergy is now the dominant brand.
+Standard proposal structure (from real sales data):
+- Option 1 "Essential": Solar PV only — entry price point, ~60% of roof capacity
+- Option 2 "Recommended": Solar + Battery (most popular, ~52% of signed projects) — use a Sigenergy complete package
+- Option 3 "Premium": Solar + Battery + ${form.ev?'Wallbox':needsHP?'Heat Pump':'Wallbox'} — maximum self-sufficiency
 
 LOCATION: ${geo.display}
-COORDS: ${geo.lat.toFixed(4)}N, ${geo.lon.toFixed(4)}E | Country: ${geo.country}
-ROOF: ${form.roofArea}m² usable | tilt ${form.tilt}° | azimuth ${form.azimuth}° (180=south)
-MODULES: max ${mods.maxRoof} fit on roof, recommended ${mods.rec} modules = ${kwp} kWp
-SOLAR YIELD DATA: ${pvSrc}
-CONSUMPTION: ${form.kwh.toLocaleString()} kWh/yr | ${form.persons} person(s) | EV: ${form.ev ? 'yes, add wallbox (+~2,500 kWh/yr)' : 'no'}
-HEATING: currently ${form.heating}${needsHP ? ' → STRONGLY recommend replacing with heat pump' : ''}
+COORDS: ${geo.lat.toFixed(4)}N, ${geo.lon.toFixed(4)}E
+ROOF: ${form.roofArea}m² | tilt ${form.tilt}° | azimuth ${form.azimuth}° (180=south)
+MAX MODULES: ${mods.maxRoof} fit | demand-based recommendation: ${mods.rec} modules = ${kwp} kWp
+SOLAR YIELD: ${pvSrc}
+CONSUMPTION: ${form.kwh.toLocaleString()} kWh/yr | ${form.persons} person(s) | EV: ${form.ev?'yes':'no'}
+HEATING: ${form.heating}${needsHP?' → recommend heat pump in Option 3':''}
 SELF-SUFFICIENCY TARGET: ${form.selfSuf}%
-BUDGET: ${form.budget} (low=<€15k, medium=€15–30k, high=>€30k)
+BUDGET: ${form.budget}
 
-PRE-SELECTED COMPONENTS (based on real sizing rules from 1,277 projects — validate and use unless there's a strong reason not to):
-- PV Module: ${recMod.name} (${recMod.brand}, ${recMod.watt}W, ${recMod.effPct}% eff)
-- Inverter: ${recInv.name} (${recInv.brand}, ${recInv.kw}kW, eff ${recInv.effPct}%)
-- Battery: ${recBat.name} (${recBat.brand}, ${recBat.kwh}kWh, ${recBat.chemistry}, ${recBat.cycles} cycles)
-${recHP ? `- Heat Pump: ${recHP.name} (${recHP.brand}, ${recHP.kw}kW, COP ${recHP.cop})` : '- Heat Pump: not recommended for this heating type'}
-${recWB ? `- Wallbox: ${recWB.name} (${recWB.brand}, ${recWB.kw}kW)` : '- Wallbox: not needed (no EV)'}
+STANDARD PACKAGES (use these for Option 2/3 — real sold products):
+Small (≤7kWp): Sigenergy 6.3kWp+6kWh ~€14,500 | GoodWe 6.3kWp+5kWh ~€13,500
+Medium (≤11kWp): Sigenergy 10.8kWp+9kWh ~€22,000 | GoodWe 10.8kWp+10kWh ~€21,500 | FoxESS 10.8kWp+10kWh ~€21,000
+Large (≤14kWp): Sigenergy 13.5kWp+9kWh ~€26,500 | GoodWe 14.85kWp+15kWh ~€29,000
+XL (≤19kWp): Sigenergy 18kWp+9kWh ~€33,000
+Wallbox: Sigenergy 11kW ~€850 | Sigenergy 22kW ~€1,050
+Heat pump (if fossil heating): Vaillant 7.5kW ~€10,200 | Vaillant 10.5kW ~€12,800
+Installation labour: ~€150-250/module | Service fees (grid registration, delivery): ~€800 flat
 
-PRODUCT CATALOG (only choose from these):
-${catalogJson}
+PRICING: all prices include installation. KfW 270 loan available. BAFA BEW grant up to €11,250 for heat pump.
+Germany electricity: €0.32/kWh, feed-in: €0.082/kWh, CO2 grid factor: 0.385 kg/kWh.
 
-PRICING CONTEXT (typical German installer prices 2024):
-- PV modules: ~€185–220/module installed
-- Inverter: €1,800–3,500 depending on size
-- Battery storage: ~€400–500/kWh installed
-- Heat pump: €8,500–15,000 installed (excl. buffer/hot water storage ~€2,000 extra)
-- Wallbox: €800–1,100 installed
-- Scaffolding/install labour: €150–250/module
-- KfW 270 subsidy: low-interest loan, not direct grant; BAFA BEW: up to €11,250 for heat pumps
-
-Return ONLY valid JSON (no markdown, no backticks, no explanation):
-{"system":{"pvModules":{"count":${mods.rec},"model":"","wattage":${MOD_W},"manufacturer":"","totalKwp":${kwp},"effPct":0.0},"inverter":{"model":"","manufacturer":"","powerKw":0.0,"type":"Hybrid","effPct":0.0},"battery":{"model":"","manufacturer":"","capacityKwh":0.0,"cycles":0,"chemistry":""},"heatPump":null,"wallbox":null,"mounting":{"type":"Pitched roof","racking":"Substructure Concrete Tile Roof","tiltDeg":${form.tilt}}},"perf":{"prodKwh":0,"consKwh":${form.kwh},"selfSufPct":0,"selfConPct":0,"co2TonYr":0.0,"syKwhKwp":${Math.round(sy)},"monthly":[0,0,0,0,0,0,0,0,0,0,0,0]},"fin":{"pvEur":0,"batEur":0,"hpEur":0,"wbEur":0,"instEur":0,"totalEur":0,"subsidyEur":0,"netEur":0,"savingsEur":0,"paybackYr":0.0,"irr25Pct":0.0,"npv25Eur":0},"rationale":"","warnings":[],"tips":[]}
+Return ONLY valid JSON, no markdown:
+{
+  "options": [
+    {
+      "id": "essential",
+      "label": "Essential",
+      "tagline": "one sentence pitch",
+      "system": {
+        "pvModules": {"count": 0, "wattage": 475, "manufacturer": "", "model": "", "totalKwp": 0.0, "effPct": 0.0},
+        "inverter": {"model": "", "manufacturer": "", "powerKw": 0.0, "type": "Hybrid", "effPct": 0.0},
+        "battery": null,
+        "heatPump": null,
+        "wallbox": null,
+        "package": null,
+        "mounting": {"type": "Pitched roof", "racking": "Substructure Concrete Tile Roof", "tiltDeg": ${form.tilt}}
+      },
+      "perf": {
+        "prodKwh": 0, "consKwh": ${form.kwh}, "selfSufPct": 0, "selfConPct": 0,
+        "co2TonYr": 0.0, "syKwhKwp": ${Math.round(sy)},
+        "monthly": [0,0,0,0,0,0,0,0,0,0,0,0]
+      },
+      "fin": {
+        "pvEur": 0, "batEur": 0, "hpEur": 0, "wbEur": 0, "instEur": 0,
+        "totalEur": 0, "subsidyEur": 0, "netEur": 0, "savingsEur": 0,
+        "paybackYr": 0.0, "irr25Pct": 0.0, "npv25Eur": 0
+      }
+    },
+    {
+      "id": "recommended",
+      "label": "Recommended",
+      "tagline": "one sentence pitch",
+      "system": { "pvModules": {"count":0,"wattage":475,"manufacturer":"","model":"","totalKwp":0.0,"effPct":0.0}, "inverter":{"model":"","manufacturer":"","powerKw":0.0,"type":"Hybrid","effPct":0.0}, "battery":{"model":"","manufacturer":"","capacityKwh":0.0,"cycles":0,"chemistry":""}, "heatPump":null, "wallbox":null, "package":"Complete Package name here or null", "mounting":{"type":"Pitched roof","racking":"Substructure Concrete Tile Roof","tiltDeg":${form.tilt}} },
+      "perf": {"prodKwh":0,"consKwh":${form.kwh},"selfSufPct":0,"selfConPct":0,"co2TonYr":0.0,"syKwhKwp":${Math.round(sy)},"monthly":[0,0,0,0,0,0,0,0,0,0,0,0]},
+      "fin": {"pvEur":0,"batEur":0,"hpEur":0,"wbEur":0,"instEur":0,"totalEur":0,"subsidyEur":0,"netEur":0,"savingsEur":0,"paybackYr":0.0,"irr25Pct":0.0,"npv25Eur":0}
+    },
+    {
+      "id": "premium",
+      "label": "Premium",
+      "tagline": "one sentence pitch",
+      "system": { "pvModules": {"count":0,"wattage":475,"manufacturer":"","model":"","totalKwp":0.0,"effPct":0.0}, "inverter":{"model":"","manufacturer":"","powerKw":0.0,"type":"Hybrid","effPct":0.0}, "battery":{"model":"","manufacturer":"","capacityKwh":0.0,"cycles":0,"chemistry":""}, "heatPump":${needsHP?'{"model":"","manufacturer":"","heatingKw":0.0,"cop":0.0,"type":""}':'null'}, "wallbox":${form.ev||!needsHP?'{"model":"","manufacturer":"","powerKw":0.0}':'null'}, "package":"Complete Package name here or null", "mounting":{"type":"Pitched roof","racking":"Substructure Concrete Tile Roof","tiltDeg":${form.tilt}} },
+      "perf": {"prodKwh":0,"consKwh":${form.kwh},"selfSufPct":0,"selfConPct":0,"co2TonYr":0.0,"syKwhKwp":${Math.round(sy)},"monthly":[0,0,0,0,0,0,0,0,0,0,0,0]},
+      "fin": {"pvEur":0,"batEur":0,"hpEur":0,"wbEur":0,"instEur":0,"totalEur":0,"subsidyEur":0,"netEur":0,"savingsEur":0,"paybackYr":0.0,"irr25Pct":0.0,"npv25Eur":0}
+    }
+  ],
+  "rationale": "2-3 sentence explanation of sizing logic",
+  "warnings": [],
+  "tips": []
+}
 
 Notes:
-- battery/heatPump/wallbox: use null if not recommended
+- battery null if not in that option; wallbox/heatPump null if not included
 - wallbox schema: {"model":"","manufacturer":"","powerKw":0.0}
 - heatPump schema: {"model":"","manufacturer":"","heatingKw":0.0,"cop":0.0,"type":""}
-- monthly: 12 kWh values (Jan–Dec) matching ${geo.lat.toFixed(1)}° latitude seasonal pattern
-- selfSufPct: realistic % for this system size and battery
-- co2TonYr: CO₂ saved vs grid average (Germany: 0.385 kg/kWh in 2024)
-- savingsEur: electricity bill savings at €0.32/kWh + feed-in at €0.082/kWh
-- paybackYr: net investment / annual savings
-- irr25Pct: 25-year IRR assuming 3% electricity price increase/yr`;
+- package: string name of the complete package used (e.g. "Complete Package 2 Sigenergy 10.8kWp + 9kWh") or null
+- Option 1 modules: ~60% of roof capacity, no battery
+- Option 2: use the most appropriate standard package for the roof size
+- Option 3: same or larger package + ${form.ev?'wallbox':needsHP?'heat pump':'wallbox'}
+- monthly: Jan-Dec kWh matching ${geo.lat.toFixed(1)}° seasonal pattern
+- Make savingsEur and paybackYr realistic`;
 
   const anthropicKey = getKey('anthropic');
   if (!anthropicKey) throw new Error('Anthropic API key not set — click "API Keys" in the top bar to add it');
@@ -1396,8 +1584,8 @@ Notes:
       'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify({
-      model: CLAUDE_MODEL, max_tokens: 2200,
-      system: 'Expert German solar installer. Return ONLY valid compact JSON, no markdown, no explanation.',
+      model: CLAUDE_MODEL, max_tokens: 3500,
+      system: 'Expert German solar installer generating multi-option proposals. Return ONLY valid compact JSON, no markdown.',
       messages: [{role:'user', content: prompt}]
     })
   });
@@ -1413,144 +1601,170 @@ Notes:
   const d = await r.json();
   if (d.error) throw new Error(`Anthropic error: ${d.error.message}`);
 
-  const txt = (d.content?.[0]?.text || '').replace(/\`\`\`json?|\`\`\`/g,'').trim();
+  const txt = (d.content?.[0]?.text || '').replace(/```json?|```/g,'').trim();
   if (!txt) throw new Error('AI returned an empty response — try again');
   try { return JSON.parse(txt); }
-  catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error('AI returned invalid JSON — this is a parsing error, please try again'); }
+  catch { const m = txt.match(/\{[\s\S]*\}/); if (m) return JSON.parse(m[0]); throw new Error('AI returned invalid JSON — please try again'); }
 }
+
 
 // ── RESULT ────────────────────────────────────────────────────
 function renderResult() {
-  const d=APP.design, sys=d.system||{}, perf=d.perf||{}, fin=d.fin||{}, monthly=perf.monthly||[];
-  const kwp=sys.pvModules?.totalKwp||0, modCount=sys.pvModules?.count||APP.mods?.rec||0;
-  const TABS=[['overview','Overview'],['system','System'],['financials','Financials'],['refine','Refine with AI']];
-  const tabBar=`<div class="tab-bar">${TABS.map(([t,l])=>`<button class="tab-btn${APP.tab===t?' active':''}" onclick="APP.tab='${t}';render()">${l}</button>`).join('')}</div>`;
-  let body='';
+  const d = APP.design;
+  const options = d.options || [];
+  const selId = APP.selectedOption || 'recommended';
+  const opt = options.find(o=>o.id===selId) || options[0] || {};
+  const sys = opt.system || {}, perf = opt.perf || {}, fin = opt.fin || {};
+  const monthly = perf.monthly || [];
+  const kwp = sys.pvModules?.totalKwp || 0;
+  const modCount = sys.pvModules?.count || APP.mods?.rec || 0;
 
-  if(APP.tab==='overview'){
+  const optBar = `<div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+    ${options.map(o => {
+      const active = o.id === selId;
+      const colors = {essential:"var(--teal)",recommended:"var(--amber)",premium:"var(--blue)"};
+      const c = colors[o.id] || "var(--amber)";
+      return "<button onclick=\"APP.selectedOption='" + o.id + "\';APP.tab=\'overview\';render()\"" +
+        " style=\"flex:1;min-width:140px;padding:12px 14px;border-radius:10px;cursor:pointer;text-align:left;" +
+        "background:" + (active?c:"var(--bg-secondary)") + ";" +
+        "border:.5px solid " + (active?c:"var(--border)") + ";" +
+        "color:" + (active?"#fff":"var(--text-muted)") + ";" +
+        "transition:all .15s;font-family:inherit\">" +
+        "<div style=\"font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;opacity:" + (active?1:.7) + "\">" + o.label + "</div>" +
+        "<div style=\"font-size:14px;font-weight:600;margin-top:3px;color:" + (active?"#fff":"var(--text)") + "\">\u20ac" + (o.fin&&o.fin.netEur?o.fin.netEur.toLocaleString():"—") + "</div>" +
+        "<div style=\"font-size:11px;margin-top:2px;opacity:.8\">" + (o.tagline||"") + "</div>" +
+        "</button>";
+    }).join("")}
+  </div>`;
+
+  const TABS=[["overview","Overview"],["system","System"],["financials","Financials"],["refine","Refine with AI"]];
+  const hasUpdate = !!APP.designUpdated && APP.tab==='refine';
+  const tabBar=`<div class="tab-bar">${TABS.map(([t,l])=>{
+    const dot = hasUpdate && t!=='refine' ? '<span style="display:inline-block;width:6px;height:6px;background:var(--teal);border-radius:50%;margin-left:5px;vertical-align:middle"></span>' : '';
+    return `<button class="tab-btn${APP.tab===t?' active':''}" onclick="setTab('${t}')">${l}${dot}</button>`;
+  }).join("")}</div>`;
+  let body="";
+
+  if(APP.tab==="overview"){
     const maxMods=APP.mods?.maxRoof||0;
-    body=`
-      <div class="grid2" style="margin-bottom:16px">
-        <div class="card">
-          <span class="section-label" style="margin-bottom:10px">Roof layout — ${APP.form.roofArea}m²</span>
-          ${renderRoofSVG(APP.form.roofArea,modCount)}
-          <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--text-muted)">
-            <span>Max: <strong style="color:var(--text)">${maxMods}</strong></span>
-            <span>Installed: <strong style="color:var(--amber)">${modCount}</strong></span>
-          </div>
-        </div>
-        <div class="card">
-          <span class="section-label" style="margin-bottom:10px">Monthly production (kWh)</span>
-          <div style="position:relative;width:100%;height:140px"><canvas id="monthChart"></canvas></div>
-          <div style="display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--text-muted)">
-            <span>${perf.syKwhKwp||Math.round(APP.sy)} kWh/kWp</span>
-            <span style="color:${APP.pvgis?'var(--teal-dk)':'var(--text-muted)'}">${APP.pvgis?'✓ Live PVGIS':'Estimated'}</span>
-          </div>
-        </div>
-      </div>
-      ${d.rationale?`<div class="card" style="border-color:var(--amber);margin-bottom:12px">
-        <span class="section-label" style="color:var(--amber-dk);margin-bottom:8px">AI design rationale</span>
-        <p style="font-size:13px;line-height:1.7">${d.rationale}</p>
-        ${(d.tips||[]).length?`<div style="margin-top:10px">${d.tips.map(t=>`<div style="font-size:12px;color:var(--amber-dk);display:flex;gap:8px;margin-bottom:4px"><span>→</span>${t}</div>`).join('')}</div>`:''}
-      </div>`:''}
-      ${(d.warnings||[]).filter(Boolean).length?`<div class="alert alert-warn">${d.warnings.map(w=>`<div>• ${w}</div>`).join('')}</div>`:''}
-    `;
-  } else if(APP.tab==='system'){
+    body="<div class=\"grid2\" style=\"margin-bottom:16px\">" +
+      "<div class=\"card\">" +
+        "<span class=\"section-label\" style=\"margin-bottom:10px\">Roof layout \u2014 " + APP.form.roofArea + "m\u00b2</span>" +
+        renderRoofSVG(APP.form.roofArea, modCount) +
+        "<div style=\"display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--text-muted)\">" +
+          "<span>Max: <strong style=\"color:var(--text)\">" + maxMods + "</strong></span>" +
+          "<span>Installed: <strong style=\"color:var(--amber)\">" + modCount + "</strong></span>" +
+        "</div>" +
+        (sys.package ? "<div style=\"margin-top:10px;padding:8px 10px;background:var(--amber-lt);border-radius:6px;font-size:11px;color:var(--amber-dk)\">\ud83d\udce6 " + sys.package + "</div>" : "") +
+      "</div>" +
+      "<div class=\"card\">" +
+        "<span class=\"section-label\" style=\"margin-bottom:10px\">Monthly production (kWh)</span>" +
+        "<div style=\"position:relative;width:100%;height:140px\"><canvas id=\"monthChart\"></canvas></div>" +
+        "<div style=\"display:flex;justify-content:space-between;margin-top:10px;font-size:12px;color:var(--text-muted)\">" +
+          "<span>" + (perf.syKwhKwp||Math.round(APP.sy)) + " kWh/kWp</span>" +
+          "<span style=\"color:" + (APP.pvgis?"var(--teal-dk)":"var(--text-muted)") + "\">" + (APP.pvgis?"\u2713 Live PVGIS":"Estimated") + "</span>" +
+        "</div>" +
+      "</div>" +
+    "</div>" +
+    (d.rationale ? "<div class=\"card\" style=\"border-color:var(--amber);margin-bottom:12px\">" +
+      "<span class=\"section-label\" style=\"color:var(--amber-dk);margin-bottom:8px\">AI design rationale</span>" +
+      "<p style=\"font-size:13px;line-height:1.7\">" + d.rationale + "</p>" +
+    "</div>" : "") +
+    ((d.warnings||[]).filter(Boolean).length ? "<div class=\"alert alert-warn\">" + d.warnings.map(w=>"<div>\u2022 "+w+"</div>").join("") + "</div>" : "");
+
+  } else if(APP.tab==="system"){
     function comp(icon,cat,mfr,mdl,det,c){
-      if(!mdl) return '';
-      return `<div class="comp-row">
-        <div class="comp-icon">${icon}</div>
-        <div class="comp-body">
-          <div class="comp-cat">${cat}</div>
-          <div class="comp-name">${mfr} ${mdl}</div>
-          <div class="comp-det">${det.filter(Boolean).map((d,i)=>`<span${i===0?` style="color:${c}"`:''}>${d}</span>`).join('')}</div>
-        </div>
-      </div>`;
+      if(!mdl) return "";
+      return "<div class=\"comp-row\">" +
+        "<div class=\"comp-icon\">" + icon + "</div>" +
+        "<div class=\"comp-body\">" +
+          "<div class=\"comp-cat\">" + cat + "</div>" +
+          "<div class=\"comp-name\">" + mfr + " " + mdl + "</div>" +
+          "<div class=\"comp-det\">" + det.filter(Boolean).map((d,i)=>"<span"+(i===0?" style=\"color:"+c+"\"":"")+">"+d+"</span>").join("") + "</div>" +
+        "</div></div>";
     }
-    body=`
-      ${comp('☀','PV Modules',sys.pvModules?.manufacturer,sys.pvModules?.model,[`${sys.pvModules?.count}× ${sys.pvModules?.wattage}W = ${sys.pvModules?.totalKwp} kWp`,`Eff. ${sys.pvModules?.effPct}%`,sys.mounting?.type],'var(--amber)')}
-      ${comp('⚡','Inverter',sys.inverter?.manufacturer,sys.inverter?.model,[`${sys.inverter?.powerKw} kW ${sys.inverter?.type}`,`Eff. ${sys.inverter?.effPct}%`],'var(--blue)')}
-      ${sys.battery?comp('🔋','Battery',sys.battery?.manufacturer,sys.battery?.model,[`${sys.battery?.capacityKwh} kWh`,sys.battery?.chemistry,`${(sys.battery?.cycles||0).toLocaleString()} cycles`],'var(--teal)'):''}
-      ${sys.heatPump?comp('♨','Heat Pump',sys.heatPump?.manufacturer,sys.heatPump?.model,[`${sys.heatPump?.heatingKw} kW`,`COP ${sys.heatPump?.cop}`,sys.heatPump?.type],'var(--blue)'):''}
-      ${sys.wallbox?comp('🔌','Wallbox / EV Charger',sys.wallbox?.manufacturer,sys.wallbox?.model,[`${sys.wallbox?.powerKw} kW`],'var(--blue)'):''}
-      ${comp('🔩','Mounting','',sys.mounting?.racking,[sys.mounting?.type,`${sys.mounting?.tiltDeg}° tilt`],'var(--text-muted)')}
-      <div style="margin-top:16px"><span class="section-label" style="margin-bottom:10px">Performance</span>
-        <div class="grid3">
-          <div class="metric-card"><div class="metric-val" style="color:var(--amber)">${perf.selfSufPct||0}<span class="metric-unit">%</span></div><div class="metric-lbl">Self-sufficiency</div></div>
-          <div class="metric-card"><div class="metric-val" style="color:var(--blue)">${perf.selfConPct||0}<span class="metric-unit">%</span></div><div class="metric-lbl">Self-consumption</div></div>
-          <div class="metric-card"><div class="metric-val" style="color:var(--teal)">${(perf.co2TonYr||0).toFixed(1)}<span class="metric-unit">t/yr</span></div><div class="metric-lbl">CO₂ saved</div></div>
-        </div>
-      </div>
-    `;
-  } else if(APP.tab==='financials'){
+    body =
+      (sys.package ? "<div class=\"comp-row\" style=\"border:.5px solid var(--amber)\">" +
+        "<div class=\"comp-icon\">\ud83d\udce6</div>" +
+        "<div class=\"comp-body\"><div class=\"comp-cat\">Complete Package</div>" +
+        "<div class=\"comp-name\">" + sys.package + "</div>" +
+        "<div class=\"comp-det\"><span style=\"color:var(--amber)\">Bundled system \u2014 inverter + battery included</span></div></div></div>" : "") +
+      comp("\u2600","PV Modules",sys.pvModules?.manufacturer,sys.pvModules?.model,[sys.pvModules?.count+"\u00d7 "+sys.pvModules?.wattage+"W = "+sys.pvModules?.totalKwp+" kWp","Eff. "+sys.pvModules?.effPct+"%",sys.mounting?.type],"var(--amber)") +
+      comp("\u26a1","Inverter",sys.inverter?.manufacturer,sys.inverter?.model,[sys.inverter?.powerKw+" kW "+sys.inverter?.type,"Eff. "+sys.inverter?.effPct+"%"],"var(--blue)") +
+      (sys.battery ? comp("\ud83d\udd0b","Battery",sys.battery?.manufacturer,sys.battery?.model,[sys.battery?.capacityKwh+" kWh",sys.battery?.chemistry,(sys.battery?.cycles||0).toLocaleString()+" cycles"],"var(--teal)") : "") +
+      (sys.heatPump ? comp("\u2668","Heat Pump",sys.heatPump?.manufacturer,sys.heatPump?.model,[sys.heatPump?.heatingKw+" kW","COP "+sys.heatPump?.cop,sys.heatPump?.type],"var(--blue)") : "") +
+      (sys.wallbox ? comp("\ud83d\udd0c","Wallbox",sys.wallbox?.manufacturer,sys.wallbox?.model,[sys.wallbox?.powerKw+" kW"],"var(--blue)") : "") +
+      comp("\ud83d\udd29","Mounting","",sys.mounting?.racking,[sys.mounting?.type,sys.mounting?.tiltDeg+"\u00b0 tilt"],"var(--text-muted)") +
+      "<div style=\"margin-top:16px\"><span class=\"section-label\" style=\"margin-bottom:10px\">Performance</span>" +
+      "<div class=\"grid3\">" +
+        "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--amber)\">" + (perf.selfSufPct||0) + "<span class=\"metric-unit\">%</span></div><div class=\"metric-lbl\">Self-sufficiency</div></div>" +
+        "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--blue)\">" + (perf.selfConPct||0) + "<span class=\"metric-unit\">%</span></div><div class=\"metric-lbl\">Self-consumption</div></div>" +
+        "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--teal)\">" + (perf.co2TonYr||0).toFixed(1) + "<span class=\"metric-unit\">t/yr</span></div><div class=\"metric-lbl\">CO\u2082 saved</div></div>" +
+      "</div></div>";
+
+  } else if(APP.tab==="financials"){
     const total=fin.totalEur||1;
-    const rows=[{l:'PV system',v:fin.pvEur||0,c:'#EF9F27'},{l:'Battery',v:fin.batEur||0,c:'#1D9E75'},{l:'Heat pump',v:fin.hpEur||0,c:'#378ADD'},{l:'Installation',v:fin.instEur||0,c:'#888'}].filter(x=>x.v>0);
-    body=`
-      <div class="grid2" style="margin-bottom:14px">
-        <div class="card">
-          <span class="section-label" style="margin-bottom:12px">Cost breakdown</span>
-          ${rows.map(row=>`<div style="margin-bottom:12px">
-            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px"><span style="color:var(--text-muted)">${row.l}</span><span style="font-weight:500">€${row.v.toLocaleString()}</span></div>
-            <div style="height:3px;background:var(--bg-secondary);border-radius:2px"><div style="height:100%;background:${row.c};border-radius:2px;width:${Math.round(row.v/total*100)}%;transition:width .8s"></div></div>
-          </div>`).join('')}
-          <div style="border-top:.5px solid var(--border-light);padding-top:10px;margin-top:4px">
-            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--text-muted)">Gross total</span><span>€${(fin.totalEur||0).toLocaleString()}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px;color:var(--teal-dk)"><span>KfW / BAFA subsidies</span><span>−€${(fin.subsidyEur||0).toLocaleString()}</span></div>
-            <div style="display:flex;justify-content:space-between;font-size:15px;font-weight:600"><span>Net investment</span><span style="color:var(--amber)">€${(fin.netEur||0).toLocaleString()}</span></div>
-          </div>
-        </div>
-        <div class="card">
-          <span class="section-label" style="margin-bottom:14px">Return on investment</span>
-          <div style="display:flex;flex-direction:column;gap:12px">
-            <div class="metric-card"><div class="metric-val" style="color:var(--teal)">€${(fin.savingsEur||0).toLocaleString()}<span class="metric-unit">/yr</span></div><div class="metric-lbl">Annual savings</div></div>
-            <div class="metric-card"><div class="metric-val">${(fin.paybackYr||0).toFixed(1)}<span class="metric-unit">yr</span></div><div class="metric-lbl">Simple payback</div></div>
-            <div class="metric-card"><div class="metric-val" style="color:var(--blue)">${(fin.irr25Pct||0).toFixed(1)}<span class="metric-unit">%</span></div><div class="metric-lbl">25-year IRR</div></div>
-            <div class="metric-card"><div class="metric-val" style="color:var(--teal)">€${(fin.npv25Eur||0).toLocaleString()}</div><div class="metric-lbl">25-year NPV</div></div>
-          </div>
-        </div>
-      </div>
-      <div class="alert alert-info">Estimates based on ~€0.30/kWh electricity, current EEG feed-in tariff, KfW 270 and BAFA eligibility. Always obtain quotes from certified installers.</div>
-    `;
+    const frows=[{l:"PV system",v:fin.pvEur||0,c:"#EF9F27"},{l:"Battery",v:fin.batEur||0,c:"#1D9E75"},{l:"Heat pump",v:fin.hpEur||0,c:"#378ADD"},{l:"Wallbox",v:fin.wbEur||0,c:"#8B5CF6"},{l:"Installation",v:fin.instEur||0,c:"#888"}].filter(x=>x.v>0);
+    body="<div class=\"grid2\" style=\"margin-bottom:14px\">" +
+      "<div class=\"card\">" +
+        "<span class=\"section-label\" style=\"margin-bottom:12px\">Cost breakdown</span>" +
+        frows.map(row=>"<div style=\"margin-bottom:12px\">" +
+          "<div style=\"display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px\"><span style=\"color:var(--text-muted)\">" + row.l + "</span><span style=\"font-weight:500\">\u20ac" + row.v.toLocaleString() + "</span></div>" +
+          "<div style=\"height:3px;background:var(--bg-secondary);border-radius:2px\"><div style=\"height:100%;background:" + row.c + ";border-radius:2px;width:" + Math.round(row.v/total*100) + "%;transition:width .8s\"></div></div>" +
+        "</div>").join("") +
+        "<div style=\"border-top:.5px solid var(--border-light);padding-top:10px;margin-top:4px\">" +
+          "<div style=\"display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px\"><span style=\"color:var(--text-muted)\">Gross total</span><span>\u20ac" + (fin.totalEur||0).toLocaleString() + "</span></div>" +
+          "<div style=\"display:flex;justify-content:space-between;font-size:12px;margin-bottom:10px;color:var(--teal-dk)\"><span>KfW / BAFA subsidies</span><span>\u2212\u20ac" + (fin.subsidyEur||0).toLocaleString() + "</span></div>" +
+          "<div style=\"display:flex;justify-content:space-between;font-size:15px;font-weight:600\"><span>Net investment</span><span style=\"color:var(--amber)\">\u20ac" + (fin.netEur||0).toLocaleString() + "</span></div>" +
+        "</div>" +
+      "</div>" +
+      "<div class=\"card\">" +
+        "<span class=\"section-label\" style=\"margin-bottom:14px\">Return on investment</span>" +
+        "<div style=\"display:flex;flex-direction:column;gap:12px\">" +
+          "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--teal)\">\u20ac" + (fin.savingsEur||0).toLocaleString() + "<span class=\"metric-unit\">/yr</span></div><div class=\"metric-lbl\">Annual savings</div></div>" +
+          "<div class=\"metric-card\"><div class=\"metric-val\">" + (fin.paybackYr||0).toFixed(1) + "<span class=\"metric-unit\">yr</span></div><div class=\"metric-lbl\">Simple payback</div></div>" +
+          "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--blue)\">" + (fin.irr25Pct||0).toFixed(1) + "<span class=\"metric-unit\">%</span></div><div class=\"metric-lbl\">25-year IRR</div></div>" +
+          "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--teal)\">\u20ac" + (fin.npv25Eur||0).toLocaleString() + "</div><div class=\"metric-lbl\">25-year NPV</div></div>" +
+        "</div>" +
+      "</div>" +
+    "</div>" +
+    "<div class=\"alert alert-info\">Estimates based on \u20ac0.32/kWh electricity, \u20ac0.082/kWh feed-in, KfW 270 and BAFA eligibility. Always obtain quotes from certified installers.</div>";
+
   } else {
-    const msgs=APP.chat.map(m=>`
-      <div class="chat-row ${m.role==='user'?'user':''}">
-        <div class="chat-av">${m.role==='user'?'👤':'☀️'}</div>
-        <div class="chat-bubble">${m.content.replace(/\n/g,'<br>')}</div>
-      </div>`).join('');
-    const chips=['Add more battery','Go off-grid','Reduce system cost','Add a heat pump','More modules','Optimise self-sufficiency']
-      .map(s=>`<button class="pill-btn" onclick="document.getElementById('chatIn').value='${s}'">${s}</button>`).join('');
-    body=`
-      <div style="max-height:380px;overflow-y:auto;margin-bottom:12px" id="chatScroll">
-        ${msgs}
-        ${APP.chatLoading?`<div class="chat-row"><div class="chat-av">☀️</div><div style="font-size:12px;color:var(--text-muted);padding:10px">Thinking…</div></div>`:''}
-        <div id="chatEnd"></div>
-      </div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px">${chips}</div>
-      <div style="display:flex;gap:10px">
-        <textarea id="chatIn" rows="2" placeholder="Ask to adjust battery size, add a heat pump, change budget…"
-          style="flex:1;resize:none;padding:10px 14px;border-radius:8px;border:.5px solid var(--border);background:var(--bg-secondary);font-size:13px;font-family:inherit;color:var(--text);outline:none"></textarea>
-        <button onclick="sendChat()" class="btn btn-primary" style="align-self:stretch;padding:0 20px">Send</button>
-      </div>
-    `;
+    const msgs=APP.chat.map(m=>"<div class=\"chat-row "+(m.role==="user"?"user":"")+"\"><div class=\"chat-av\">"+(m.role==="user"?"\ud83d\udc64":"\u2600\ufe0f")+"</div><div class=\"chat-bubble\">"+m.content.replace(/\n/g,"<br>")+"</div></div>").join("");
+    const chips=["Compare all 3 options","Upgrade Essential with battery","Which option has best payback?","Add heat pump to Premium","Increase battery size in Recommended","Explain the Sigenergy package"]
+      .map(s=>"<button class=\"pill-btn\" onclick=\"document.getElementById(\'chatIn\').value=\'"+s+"\'\">"+s+"</button>").join("");
+    body="<div style=\"max-height:380px;overflow-y:auto;margin-bottom:12px\" id=\"chatScroll\">" +
+      msgs +
+      (APP.chatLoading?"<div class=\"chat-row\"><div class=\"chat-av\">\u2600\ufe0f</div><div style=\"font-size:12px;color:var(--text-muted);padding:10px\">Thinking\u2026</div></div>":"") +
+      "<div id=\"chatEnd\"></div></div>" +
+      "<div style=\"display:flex;flex-wrap:wrap;gap:6px;margin-bottom:10px\">" + chips + "</div>" +
+      "<div style=\"display:flex;gap:10px\">" +
+        "<textarea id=\"chatIn\" rows=\"2\" placeholder=\"Ask to compare options, adjust components, or explain anything\u2026\"" +
+        " style=\"flex:1;resize:none;padding:10px 14px;border-radius:8px;border:.5px solid var(--border);background:var(--bg-secondary);font-size:13px;font-family:inherit;color:var(--text);outline:none\"></textarea>" +
+        "<button onclick=\"sendChat()\" class=\"btn btn-primary\" style=\"align-self:stretch;padding:0 20px\">Send</button>" +
+      "</div>";
   }
 
-  return `
-    <div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:16px;border-bottom:.5px solid var(--border-light)">
-      <div>
-        <div style="font-size:12px;color:var(--text-muted)">${sys.pvModules?.manufacturer||''} · ${sys.pvModules?.count||0}× ${sys.pvModules?.wattage||0}W · ${APP.form.city||APP.form.display?.split(',')[0]||''}</div>
-      </div>
-      <button class="btn btn-ghost btn-sm" onclick="APP.wizardStep=0;setPage('home')">New design</button>
-    </div>
-    <div class="grid4" style="margin-bottom:18px">
-      <div class="metric-card"><div class="metric-val" style="color:var(--amber)">${kwp.toFixed(1)}<span class="metric-unit">kWp</span></div><div class="metric-lbl">System size</div></div>
-      <div class="metric-card"><div class="metric-val" style="color:var(--teal)">${(perf.prodKwh||0).toLocaleString()}<span class="metric-unit">kWh/yr</span></div><div class="metric-lbl">Annual output</div></div>
-      <div class="metric-card"><div class="metric-val" style="color:var(--blue)">${perf.selfSufPct||0}<span class="metric-unit">%</span></div><div class="metric-lbl">Self-sufficiency</div></div>
-      <div class="metric-card"><div class="metric-val">${(fin.paybackYr||0).toFixed(1)}<span class="metric-unit">yr</span></div><div class="metric-lbl">Payback</div></div>
-    </div>
-    ${tabBar}
-    <div class="fade-in">${body}</div>
-  `;
+  return "<div style=\"display:flex;align-items:center;justify-content:space-between;padding-bottom:14px;margin-bottom:16px;border-bottom:.5px solid var(--border-light)\">" +
+    "<div style=\"font-size:12px;color:var(--text-muted)\">" + (APP.form.city||APP.form.display?.split(",")[0]||"") + " \u00b7 " + options.length + " options \u00b7 PVGIS + Claude AI</div>" +
+  "<div style=\"display:flex;gap:8px\">" +
+  "<button class=\"btn btn-ghost btn-sm\" onclick=\"downloadPDF()\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" stroke-linecap=\"round\"><path d=\"M3 17h14M10 3v10M6 9l4 4 4-4\"/></svg> Download PDF</button>" +
+  "<button class=\"btn btn-primary btn-sm\" onclick=\"finalisePDF()\"><svg width=\"13\" height=\"13\" viewBox=\"0 0 20 20\" fill=\"none\" stroke=\"#fff\" stroke-width=\"1.8\" stroke-linecap=\"round\"><polyline points=\"4,10 8,14 16,6\"/></svg> Finalise</button>" +
+  "<button class=\"btn btn-ghost btn-sm\" onclick=\"APP.wizardStep=0;setPage(\'home\')\">New design</button>" +
+  "</div>" +
+  "</div>" +
+  optBar +
+  "<div class=\"grid4\" style=\"margin-bottom:18px\">" +
+    "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--amber)\">" + (kwp.toFixed?kwp.toFixed(1):kwp) + "<span class=\"metric-unit\">kWp</span></div><div class=\"metric-lbl\">System size</div></div>" +
+    "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--teal)\">" + (perf.prodKwh||0).toLocaleString() + "<span class=\"metric-unit\">kWh/yr</span></div><div class=\"metric-lbl\">Annual output</div></div>" +
+    "<div class=\"metric-card\"><div class=\"metric-val\" style=\"color:var(--blue)\">" + (perf.selfSufPct||0) + "<span class=\"metric-unit\">%</span></div><div class=\"metric-lbl\">Self-sufficiency</div></div>" +
+    "<div class=\"metric-card\"><div class=\"metric-val\">" + (fin.paybackYr||0).toFixed(1) + "<span class=\"metric-unit\">yr</span></div><div class=\"metric-lbl\">Payback</div></div>" +
+  "</div>" +
+  tabBar +
+  "<div class=\"fade-in\">" + body + "</div>";
 }
+
 
 function bindResult() {
   if(APP.tab==='overview'&&(APP.design?.perf?.monthly||[]).length){
@@ -1585,20 +1799,98 @@ async function sendChat(){
   APP.chat.push({role:'user',content:val});
   if(inp) inp.value='';
   APP.chatLoading=true; render();
-  const d=APP.design, s=d.system||{}, p=d.perf||{}, f=d.fin||{};
-  const ctx=`System: ${s.pvModules?.count}× ${s.pvModules?.manufacturer} ${s.pvModules?.model} (${s.pvModules?.totalKwp}kWp), inverter: ${s.inverter?.manufacturer} ${s.inverter?.model}, battery: ${s.battery?s.battery.capacityKwh+'kWh '+s.battery.manufacturer:'none'}, heat pump: ${s.heatPump?s.heatPump.manufacturer+' '+s.heatPump.model:'none'}. Production: ${p.prodKwh}kWh/yr, self-suf: ${p.selfSufPct}%, net cost: €${(f.netEur||0).toLocaleString()}.`;
+
+  const anthropicKey=getKey('anthropic');
+  if(!anthropicKey){
+    APP.chat.push({role:'assistant',content:'Anthropic API key not set — click API Keys in the top bar.'});
+    APP.chatLoading=false; render(); return;
+  }
+
+  // Build full current design context
+  const activeOpt = APP.design?.options
+    ? APP.design.options[APP.activeOption||1] || APP.design.options[0]
+    : APP.design;
+  const s=activeOpt?.system||{}, p=activeOpt?.perf||{}, f=activeOpt?.fin||{};
+  const currentJSON = JSON.stringify(activeOpt||APP.design, null, 0);
+
+  const systemPrompt = `You are an expert German solar system designer. The user wants to refine their solar system proposal.
+
+CURRENT DESIGN (full JSON):
+${currentJSON}
+
+LOCATION: ${APP.form.display||''} (${APP.form.lat}N, ${APP.form.lon}E)
+CONSUMPTION: ${APP.form.kwh} kWh/yr | ${APP.form.persons} persons | EV: ${APP.form.ev?'yes':'no'}
+HEATING: ${APP.form.heating}
+ROOF: ${APP.form.roofArea}m² | ${APP.form.tilt}° tilt | ${APP.form.azimuth}° azimuth
+
+When the user asks to change the system (e.g. "add more battery", "remove heat pump", "use GoodWe instead", "increase to 15 modules", "go off-grid"), you MUST:
+1. Reply with a short friendly message explaining what you changed and why (2-3 sentences max)
+2. Then output the complete updated design JSON on a new line starting with exactly: UPDATED_DESIGN:
+   followed by the full valid JSON in the same schema as the current design.
+
+If the user is just asking a question (not requesting a change), reply conversationally without UPDATED_DESIGN.
+
+Available products to swap in:
+- Batteries: Sigenergy 6kWh/9kWh, GoodWe 5kWh/10kWh, FoxESS 3.3kWh/5kWh/15kWh, EcoFlow 5.1kWh/10.2kWh/15.3kWh
+- Inverters: Sigenergy 5/8/10/12/15/17/20kW, EcoFlow 6/15kW, GoodWe various
+- Heat pumps: Vaillant 5.5kW/7.5kW/10.5kW/12.5kW, Aira 8kW
+- Wallboxes: Sigenergy 11kW/22kW, EcoFlow 11kW
+- PV modules: AIKO 475W, Trina 455W, Longi 430W
+Pricing: modules €185-220 installed, battery €400-500/kWh, inverter €1800-3500, heat pump €8500-15000, wallbox €800-1100, labour €150-250/module.`;
+
   try{
-    const anthropicKey=getKey('anthropic');
-    if(!anthropicKey){APP.chat.push({role:'assistant',content:'Anthropic API key not set — click API Keys in the top bar.'});APP.chatLoading=false;render();return;}
     const r=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{
       'Content-Type':'application/json','x-api-key':anthropicKey,
       'anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},
-      body:JSON.stringify({model:CLAUDE_MODEL,max_tokens:600,
-        system:`You are a solar energy expert helping refine a residential system. ${ctx} Be concise, specific, and give concrete numbers.`,
-        messages:APP.chat.map(m=>({role:m.role,content:m.content}))})});
-    const rd=await r.json();
-    APP.chat.push({role:'assistant',content:rd.content?.[0]?.text||'Error.'});
-  }catch{APP.chat.push({role:'assistant',content:'Error — check your Anthropic API key in settings.'});}
+      body:JSON.stringify({model:CLAUDE_MODEL, max_tokens:2500,
+        system: systemPrompt,
+        messages: APP.chat.map(m=>({role:m.role,content:m.content}))
+      })
+    });
+    const rd = await r.json();
+    const fullText = rd.content?.[0]?.text || 'Error.';
+
+    // Check if AI returned an updated design
+    const splitIdx = fullText.indexOf('UPDATED_DESIGN:');
+    if (splitIdx !== -1) {
+      const message = fullText.substring(0, splitIdx).trim();
+      const jsonStr = fullText.substring(splitIdx + 'UPDATED_DESIGN:'.length).trim();
+
+      try {
+        let updated = JSON.parse(jsonStr);
+
+        // Handle both single-design and multi-option schemas
+        if (APP.design?.options) {
+          // Multi-option: update the active option
+          const idx = APP.activeOption || 1;
+          APP.design.options[idx] = updated;
+        } else {
+          // Single design: replace entirely
+          APP.design = updated;
+        }
+
+        // Add chat message with update indicator
+        APP.chat.push({
+          role:'assistant',
+          content: message + ' ✅ Design updated — check Overview, System and Financials tabs.'
+        });
+
+        // Flash other tabs to indicate they updated
+        APP.designUpdated = Date.now();
+
+      } catch(parseErr) {
+        // JSON parse failed — just show the message
+        APP.chat.push({role:'assistant', content: fullText});
+      }
+    } else {
+      // Conversational response, no design change
+      APP.chat.push({role:'assistant', content: fullText});
+    }
+
+  } catch(e) {
+    APP.chat.push({role:'assistant', content:'Error — check your Anthropic API key in settings.'});
+  }
+
   APP.chatLoading=false; render();
 }
 
@@ -1624,6 +1916,246 @@ function renderRoofSVG(area,count){
   </svg>`;
 }
 
+
+// ── PDF / Finalise ────────────────────────────────────────────
+
+function buildProposalHTML() {
+  const d = APP.design;
+  const options = d?.options || [d];
+  const activeOpt = options[APP.activeOption||0] || options[0];
+  const sys = activeOpt?.system || {};
+  const perf = activeOpt?.perf || {};
+  const fin = activeOpt?.fin || {};
+  const f = APP.form;
+  const monthly = perf.monthly || [];
+  const MONTHS_SHORT = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const kwp = sys.pvModules?.totalKwp || 0;
+  const location = f.city || f.display?.split(',')[0] || 'Property';
+  const today = new Date().toLocaleDateString('en-DE', {day:'2-digit',month:'long',year:'numeric'});
+
+  function row(label, value) {
+    return `<tr><td style="padding:7px 12px;color:#6B6B6B;font-size:12px;border-bottom:1px solid #F2F1EE">${label}</td>
+      <td style="padding:7px 12px;font-size:12px;font-weight:500;border-bottom:1px solid #F2F1EE;text-align:right">${value}</td></tr>`;
+  }
+
+  function compBlock(icon, cat, mfr, mdl, details) {
+    if (!mdl) return '';
+    return `<div style="display:flex;gap:12px;padding:10px 14px;background:#F8F7F4;border-radius:8px;margin-bottom:8px;page-break-inside:avoid">
+      <div style="font-size:20px;line-height:1;padding-top:2px">${icon}</div>
+      <div>
+        <div style="font-size:9px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:2px">${cat}</div>
+        <div style="font-size:13px;font-weight:600">${mfr} ${mdl}</div>
+        <div style="font-size:11px;color:#6B6B6B;margin-top:2px">${details.filter(Boolean).join(' · ')}</div>
+      </div>
+    </div>`;
+  }
+
+  // Monthly bar chart as SVG
+  const maxM = Math.max(...monthly, 1);
+  const barH = 50;
+  const barW = 16, gap = 3;
+  const totalW = (barW + gap) * 12 - gap;
+  const bars = monthly.map((v, i) => {
+    const h = Math.round((v / maxM) * barH);
+    const x = i * (barW + gap);
+    const avg = monthly.reduce((a,b)=>a+b,0)/12;
+    const fill = v >= avg ? '#EF9F27' : '#FAC775';
+    return `<rect x="${x}" y="${barH - h}" width="${barW}" height="${h}" rx="2" fill="${fill}"/>
+      <text x="${x + barW/2}" y="${barH + 12}" text-anchor="middle" font-size="7" fill="#888" font-family="sans-serif">${MONTHS_SHORT[i]}</text>`;
+  }).join('');
+  const chartSVG = `<svg width="${totalW}" height="${barH + 18}" viewBox="0 0 ${totalW} ${barH + 18}" style="display:block">${bars}</svg>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Solar Proposal — ${location}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm 16mm; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #1A1A1A; font-size: 13px; line-height: 1.5; }
+  .page-break { page-break-before: always; }
+  h1 { font-size: 22px; font-weight: 700; }
+  h2 { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+  .amber { color: #EF9F27; }
+  .muted { color: #6B6B6B; }
+  .metric { text-align: center; background: #F8F7F4; border-radius: 8px; padding: 12px 8px; }
+  .metric-val { font-size: 20px; font-weight: 700; line-height: 1.1; }
+  .metric-lbl { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: #888; margin-top: 4px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4,1fr); gap: 8px; margin-bottom: 18px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  table { width: 100%; border-collapse: collapse; }
+  .section { margin-bottom: 22px; }
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 10px; font-weight: 600; }
+  .badge-amber { background: #FAEEDA; color: #854F0B; }
+  .badge-teal { background: #E1F5EE; color: #0F6E56; }
+  .fin-total { display: flex; justify-content: space-between; font-size: 16px; font-weight: 700; padding: 10px 12px; background: #FAEEDA; border-radius: 8px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #EF9F27">
+  <div>
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <svg width="18" height="18" viewBox="0 0 20 20"><circle cx="10" cy="10" r="4.5" fill="#EF9F27"/><g stroke="#EF9F27" stroke-width="1.8" stroke-linecap="round"><line x1="10" y1="1" x2="10" y2="3.5"/><line x1="10" y1="16.5" x2="10" y2="19"/><line x1="1" y1="10" x2="3.5" y2="10"/><line x1="16.5" y1="10" x2="19" y2="10"/><line x1="3.05" y1="3.05" x2="5.1" y2="5.1"/><line x1="14.9" y1="14.9" x2="16.95" y2="16.95"/><line x1="16.95" y1="3.05" x2="14.9" y2="5.1"/><line x1="5.1" y1="14.9" x2="3.05" y2="16.95"/></g></svg>
+      <span style="font-size:13px;font-weight:700;letter-spacing:.02em">SOLARA</span>
+    </div>
+    <h1>Solar System Proposal</h1>
+    <div class="muted" style="margin-top:4px;font-size:12px">${location} · Generated ${today}</div>
+  </div>
+  <div style="text-align:right">
+    <span class="badge badge-amber" style="margin-bottom:4px;display:block">AI-Designed</span>
+    <div style="font-size:10px;color:#888">PVGIS JRC · Claude AI</div>
+  </div>
+</div>
+
+<!-- Key metrics -->
+<div class="section">
+  <div class="grid4">
+    <div class="metric"><div class="metric-val amber">${kwp.toFixed ? kwp.toFixed(1) : kwp}<span style="font-size:12px;color:#888;margin-left:2px">kWp</span></div><div class="metric-lbl">System size</div></div>
+    <div class="metric"><div class="metric-val" style="color:#1D9E75">${(perf.prodKwh||0).toLocaleString()}<span style="font-size:12px;color:#888;margin-left:2px">kWh/yr</span></div><div class="metric-lbl">Annual output</div></div>
+    <div class="metric"><div class="metric-val" style="color:#378ADD">${perf.selfSufPct||0}<span style="font-size:12px;color:#888;margin-left:2px">%</span></div><div class="metric-lbl">Self-sufficiency</div></div>
+    <div class="metric"><div class="metric-val">${(fin.paybackYr||0).toFixed(1)}<span style="font-size:12px;color:#888;margin-left:2px">yr</span></div><div class="metric-lbl">Payback</div></div>
+  </div>
+</div>
+
+<!-- Property & Solar data -->
+<div class="section grid2">
+  <div>
+    <h2>Property details</h2>
+    <table>
+      ${row('Address', f.display?.substring(0,45) + (f.display?.length>45?'…':'') || '—')}
+      ${row('Coordinates', `${f.lat}°N, ${f.lon}°E`)}
+      ${row('Roof area', `${f.roofArea} m²`)}
+      ${row('Roof tilt', `${f.tilt}°`)}
+      ${row('Orientation', `${f.azimuth}° (${azLabel(f.azimuth)})`)}
+      ${row('Annual demand', `${(f.kwh||0).toLocaleString()} kWh/yr`)}
+      ${row('Occupants', f.persons)}
+      ${row('EV charging', f.ev ? 'Yes' : 'No')}
+      ${row('Heating', f.heating)}
+    </table>
+  </div>
+  <div>
+    <h2>Solar yield (PVGIS JRC)</h2>
+    <table>
+      ${row('Specific yield', `${perf.syKwhKwp||Math.round(APP.sy||900)} kWh/kWp/yr`)}
+      ${row('Data source', APP.pvgis ? 'Live PVGIS JRC' : 'Latitude estimate')}
+      ${row('Annual production', `${(perf.prodKwh||0).toLocaleString()} kWh`)}
+      ${row('Self-consumption', `${perf.selfConPct||0}%`)}
+      ${row('CO₂ saved', `${(perf.co2TonYr||0).toFixed(1)} t/yr`)}
+    </table>
+    <div style="margin-top:14px">
+      <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:#888;margin-bottom:8px">Monthly production</div>
+      ${chartSVG}
+    </div>
+  </div>
+</div>
+
+<!-- System components -->
+<div class="section">
+  <h2>System components</h2>
+  ${compBlock('☀', 'PV Modules', sys.pvModules?.manufacturer||'', sys.pvModules?.model||'—', [
+    `${sys.pvModules?.count||0}× ${sys.pvModules?.wattage||0}W`,
+    `${sys.pvModules?.totalKwp} kWp total`,
+    `${sys.pvModules?.effPct}% efficiency`
+  ])}
+  ${compBlock('⚡', 'Inverter', sys.inverter?.manufacturer||'', sys.inverter?.model||'—', [
+    `${sys.inverter?.powerKw} kW`,
+    sys.inverter?.type,
+    `${sys.inverter?.effPct}% efficiency`
+  ])}
+  ${sys.battery ? compBlock('🔋', 'Battery Storage', sys.battery?.manufacturer||'', sys.battery?.model||'—', [
+    `${sys.battery?.capacityKwh} kWh`,
+    sys.battery?.chemistry,
+    `${(sys.battery?.cycles||0).toLocaleString()} cycles`
+  ]) : ''}
+  ${sys.heatPump ? compBlock('♨', 'Heat Pump', sys.heatPump?.manufacturer||'', sys.heatPump?.model||'—', [
+    `${sys.heatPump?.heatingKw} kW`,
+    `COP ${sys.heatPump?.cop}`,
+    sys.heatPump?.type
+  ]) : ''}
+  ${sys.wallbox ? compBlock('🔌', 'EV Wallbox', sys.wallbox?.manufacturer||'', sys.wallbox?.model||'—', [
+    `${sys.wallbox?.powerKw} kW`
+  ]) : ''}
+  ${compBlock('🔩', 'Mounting', '', sys.mounting?.racking||'—', [sys.mounting?.type, `${sys.mounting?.tiltDeg}° tilt`])}
+</div>
+
+<!-- Financials -->
+<div class="section page-break">
+  <h2>Financial analysis</h2>
+  <div class="grid2">
+    <div>
+      <table style="margin-bottom:8px">
+        ${row('PV system', `€${(fin.pvEur||0).toLocaleString()}`)}
+        ${fin.batEur ? row('Battery storage', `€${(fin.batEur||0).toLocaleString()}`) : ''}
+        ${fin.hpEur ? row('Heat pump', `€${(fin.hpEur||0).toLocaleString()}`) : ''}
+        ${fin.wbEur ? row('Wallbox', `€${(fin.wbEur||0).toLocaleString()}`) : ''}
+        ${row('Installation', `€${(fin.instEur||0).toLocaleString()}`)}
+        ${row('Gross total', `€${(fin.totalEur||0).toLocaleString()}`)}
+        ${row('KfW/BAFA subsidies', `−€${(fin.subsidyEur||0).toLocaleString()}`)}
+      </table>
+      <div class="fin-total"><span>Net investment</span><span class="amber">€${(fin.netEur||0).toLocaleString()}</span></div>
+    </div>
+    <div>
+      <table>
+        ${row('Annual savings', `€${(fin.savingsEur||0).toLocaleString()}/yr`)}
+        ${row('Simple payback', `${(fin.paybackYr||0).toFixed(1)} years`)}
+        ${row('25-year IRR', `${(fin.irr25Pct||0).toFixed(1)}%`)}
+        ${row('25-year NPV', `€${(fin.npv25Eur||0).toLocaleString()}`)}
+      </table>
+    </div>
+  </div>
+</div>
+
+${d.rationale ? `
+<div class="section">
+  <h2>Design rationale</h2>
+  <div style="font-size:12px;line-height:1.7;color:#444;background:#F8F7F4;border-radius:8px;padding:12px 14px;border-left:3px solid #EF9F27">${d.rationale}</div>
+</div>` : ''}
+
+<!-- Footer -->
+<div style="margin-top:24px;padding-top:12px;border-top:1px solid #F2F1EE;display:flex;justify-content:space-between;font-size:10px;color:#888">
+  <span>Solar data: PVGIS JRC (European Commission) · AI design: Claude (Anthropic)</span>
+  <span>This proposal is indicative. Obtain certified installer quotes before proceeding.</span>
+</div>
+
+</body>
+</html>`;
+}
+
+function downloadPDF() {
+  const html = buildProposalHTML();
+  const win = window.open('', '_blank');
+  win.document.write(html);
+  win.document.close();
+  win.focus();
+  setTimeout(() => { win.print(); }, 600);
+}
+
+function finalisePDF() {
+  // Show a finalise confirmation modal then open the PDF
+  const modal = document.createElement('div');
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);z-index:2000;display:flex;align-items:center;justify-content:center;padding:20px';
+  modal.innerHTML = `
+    <div style="background:var(--bg-card);border-radius:14px;padding:28px 30px;max-width:420px;width:100%;box-shadow:0 8px 32px rgba(0,0,0,0.2)">
+      <div style="font-size:28px;margin-bottom:12px">✅</div>
+      <div style="font-size:17px;font-weight:600;margin-bottom:8px">Finalise proposal</div>
+      <div style="font-size:13px;color:var(--text-muted);line-height:1.65;margin-bottom:22px">
+        This will generate a PDF proposal ready to share with the customer.
+        The document includes the full system design, financial analysis, and PVGIS solar data.
+      </div>
+      <div style="display:flex;gap:10px">
+        <button onclick="this.closest('div[style*=fixed]').remove()" style="flex:1;padding:10px;border-radius:8px;border:.5px solid var(--border);background:none;cursor:pointer;font-family:inherit;color:var(--text-muted)">Cancel</button>
+        <button onclick="this.closest('div[style*=fixed]').remove();downloadPDF()" style="flex:2;padding:10px;border-radius:8px;border:none;background:var(--amber);color:#fff;cursor:pointer;font-family:inherit;font-weight:600;font-size:14px">
+          Download PDF
+        </button>
+      </div>
+    </div>`;
+  document.body.appendChild(modal);
+  modal.addEventListener('click', e => { if(e.target===modal) modal.remove(); });
+}
 // ── Boot ──────────────────────────────────────────────────────
 document.getElementById('topbar-context').textContent='AI Solar System Designer';
 render();
