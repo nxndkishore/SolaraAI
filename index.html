@@ -738,16 +738,12 @@ async function initRoofViewer(key) {
     // Try the high-level helper first (Cesium >= 1.114), fall back to fromUrl
     let ts;
     try {
-      if (false) { // disabled — using proxy
-        throw new Error('use fromUrl');
-      } else {
-        throw new Error('use fromUrl');
-      }
-    } catch(_) {
       ts = await Cesium.Cesium3DTileset.fromUrl(
         '/api/maps/v1/3dtiles/root.json',
         { maximumScreenSpaceError: 8 }
       );
+    } catch(err) {
+      throw new Error('Failed to load 3D tiles: ' + err.message);
     }
     APP.viewer.scene.primitives.add(ts);
     APP.viewer.scene.globe.depthTestAgainstTerrain = false;
