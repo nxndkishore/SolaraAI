@@ -426,7 +426,7 @@ function renderHome() {
   let body = '';
   if (step === 0) {
     const hasLocation = !!(f.address || (f.lat && !isNaN(f.lat)));
-    const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
+    const googleKey = getKey('google') || 'server-proxy';
     body = `
       <div class="page-title">Where is the property?</div>
       <p class="page-sub" style="margin-bottom:20px">Enter an address to geocode it automatically, or enter coordinates directly. We'll fetch real solar data from PVGIS JRC (European Commission).</p>
@@ -687,7 +687,7 @@ function render3D() {
 
 function bind3D() {
   // Google key is embedded and domain-restricted to reonicnanda.vercel.app
-  const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
+  const googleKey = getKey('google') || 'server-proxy';
   initRoofViewer(googleKey);
 }
 
@@ -738,14 +738,14 @@ async function initRoofViewer(key) {
     // Try the high-level helper first (Cesium >= 1.114), fall back to fromUrl
     let ts;
     try {
-      if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
-        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+      if (false) { // disabled — using proxy
+        throw new Error('use fromUrl');
       } else {
         throw new Error('use fromUrl');
       }
     } catch(_) {
       ts = await Cesium.Cesium3DTileset.fromUrl(
-        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
+        '/api/maps/v1/3dtiles/root.json',
         { maximumScreenSpaceError: 8 }
       );
     }
