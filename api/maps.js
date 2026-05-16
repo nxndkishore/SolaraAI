@@ -3,7 +3,7 @@
 
 export default async function handler(req, res) {
   const origin = req.headers.origin || '';
-  const allowed = ['https://reonicnanda.vercel.app', 'http://localhost:3000', 'http://localhost'];
+  const allowed = ['https://solarainanda.vercel.app', 'http://localhost:3000', 'http://localhost'];
   if (allowed.some(o => origin.startsWith(o))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
