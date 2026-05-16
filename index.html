@@ -426,7 +426,7 @@ function renderHome() {
   let body = '';
   if (step === 0) {
     const hasLocation = !!(f.address || (f.lat && !isNaN(f.lat)));
-    const googleKey = getKey('google') || '';
+    const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
     body = `
       <div class="page-title">Where is the property?</div>
       <p class="page-sub" style="margin-bottom:20px">Enter an address to geocode it automatically, or enter coordinates directly. We'll fetch real solar data from PVGIS JRC (European Commission).</p>
@@ -686,8 +686,8 @@ function render3D() {
 }
 
 function bind3D() {
-  // Google key is embedded and domain-restricted to solarainanda.vercel.app
-  const googleKey = getKey('google') || '';
+  // Google key is embedded and domain-restricted to reonicnanda.vercel.app
+  const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
   initRoofViewer(googleKey);
 }
 
@@ -734,20 +734,51 @@ async function initRoofViewer(key) {
       }
     }
 
-    // Load Google Photorealistic 3D Tiles directly from browser
-    // Browser requests from solarainanda.vercel.app are allowed by Google
+    // Load Google Photorealistic 3D Tiles using session token auth
+    // Step 1: create a session token with the API key
+    // Step 2: use session token for tile requests (avoids key exposure in URLs)
     let ts;
     try {
-      if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
-        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
-      } else {
-        throw new Error('use fromUrl');
+      const sessionResp = await fetch(
+        `https://tile.googleapis.com/v1/createSession?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            mapType: 'photorealistic',
+            language: 'en-US',
+            region: 'US'
+          })
+        }
+      );
+      if (!sessionResp.ok) {
+        const errText = await sessionResp.text();
+        throw new Error(`Session creation failed (${sessionResp.status}): ${errText}`);
       }
-    } catch(_) {
+      const sessionData = await sessionResp.json();
+      const sessionToken = sessionData.session;
+      if (!sessionToken) throw new Error('No session token returned from Google');
+
+      // Use session token to load tiles
       ts = await Cesium.Cesium3DTileset.fromUrl(
-        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
+        `https://tile.googleapis.com/v1/3dtiles/root.json?session=${sessionToken}&key=${key}`,
         { maximumScreenSpaceError: 8 }
       );
+    } catch(sessionErr) {
+      console.warn('Session token approach failed:', sessionErr.message);
+      // Fallback: try direct key approach
+      try {
+        if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
+          ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+        } else {
+          throw new Error('use fromUrl');
+        }
+      } catch(_) {
+        ts = await Cesium.Cesium3DTileset.fromUrl(
+          `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
+          { maximumScreenSpaceError: 8 }
+        );
+      }
     }
     APP.viewer.scene.primitives.add(ts);
     APP.viewer.scene.globe.depthTestAgainstTerrain = false;
@@ -794,6 +825,8 @@ async function initRoofViewer(key) {
       userMsg = 'API key denied (403) — enable Map Tiles API and ensure billing is active in Google Cloud Console';
     } else if (userMsg.includes('400') || userMsg.includes('INVALID_REQUEST')) {
       userMsg = 'Invalid API key (400) — check the key was copied correctly';
+    } else if (userMsg.includes('Session creation failed')) {
+      userMsg = userMsg; // show full session error
     }
     if (hint) hint.innerHTML = `<div class="alert alert-error">
       ${userMsg}
