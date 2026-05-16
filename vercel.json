@@ -1,6 +1,7 @@
 {
   "version": 2,
   "rewrites": [
+    { "source": "/api/maps/:path*", "destination": "/api/maps" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [
