@@ -426,7 +426,7 @@ function renderHome() {
   let body = '';
   if (step === 0) {
     const hasLocation = !!(f.address || (f.lat && !isNaN(f.lat)));
-    const googleKey = getKey('google') || 'AIzaSyCySaPlk7hmEU8APcsy4epE1AA1jzNgDFc';
+    const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
     body = `
       <div class="page-title">Where is the property?</div>
       <p class="page-sub" style="margin-bottom:20px">Enter an address to geocode it automatically, or enter coordinates directly. We'll fetch real solar data from PVGIS JRC (European Commission).</p>
@@ -686,8 +686,8 @@ function render3D() {
 }
 
 function bind3D() {
-  // Google key is embedded and domain-restricted to reonicnanda.vercel.app
-  const googleKey = getKey('google') || 'AIzaSyCySaPlk7hmEU8APcsy4epE1AA1jzNgDFc';
+  // Google key is embedded and domain-restricted to solarainanda.vercel.app
+  const googleKey = getKey('google') || 'AIzaSyBSFOtvhgrfpjjg5Tdd2u9LBX4872d1xWE';
   initRoofViewer(googleKey);
 }
 
@@ -735,24 +735,19 @@ async function initRoofViewer(key) {
     }
 
     // Load Google Photorealistic 3D Tiles
-    // Use Cesium.createGooglePhotorealistic3DTileset with the API key directly
+    // Try the high-level helper first (Cesium >= 1.114), fall back to fromUrl
     let ts;
     try {
-      // Set the Google Maps API key for Cesium to use
-      ts = await Cesium.createGooglePhotorealistic3DTileset(key, {
-        maximumScreenSpaceError: 8
-      });
-    } catch(e1) {
-      console.warn('createGooglePhotorealistic3DTileset failed:', e1.message);
-      try {
-        // Fallback: direct URL with key
-        ts = await Cesium.Cesium3DTileset.fromUrl(
-          `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
-          { maximumScreenSpaceError: 8, skipLevelOfDetail: true }
-        );
-      } catch(e2) {
-        throw new Error(e2.message || 'Failed to load 3D tiles — check API key and billing');
+      if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
+        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+      } else {
+        throw new Error('use fromUrl');
       }
+    } catch(_) {
+      ts = await Cesium.Cesium3DTileset.fromUrl(
+        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
+        { maximumScreenSpaceError: 8 }
+      );
     }
     APP.viewer.scene.primitives.add(ts);
     APP.viewer.scene.globe.depthTestAgainstTerrain = false;
