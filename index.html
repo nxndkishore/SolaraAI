@@ -426,7 +426,7 @@ function renderHome() {
   let body = '';
   if (step === 0) {
     const hasLocation = !!(f.address || (f.lat && !isNaN(f.lat)));
-    const googleKey = 'via-server-proxy';
+    const googleKey = getKey('google') || '';
     body = `
       <div class="page-title">Where is the property?</div>
       <p class="page-sub" style="margin-bottom:20px">Enter an address to geocode it automatically, or enter coordinates directly. We'll fetch real solar data from PVGIS JRC (European Commission).</p>
@@ -687,7 +687,7 @@ function render3D() {
 
 function bind3D() {
   // Google key is embedded and domain-restricted to solarainanda.vercel.app
-  const googleKey = 'via-server-proxy';
+  const googleKey = getKey('google') || '';
   initRoofViewer(googleKey);
 }
 
@@ -734,16 +734,20 @@ async function initRoofViewer(key) {
       }
     }
 
-    // Load Google Photorealistic 3D Tiles via server-side proxy
-    // Key lives in Vercel env var GOOGLE_MAPS_API_KEY — never in browser or git
+    // Load Google Photorealistic 3D Tiles directly from browser
+    // Browser requests from solarainanda.vercel.app are allowed by Google
     let ts;
     try {
+      if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
+        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
+      } else {
+        throw new Error('use fromUrl');
+      }
+    } catch(_) {
       ts = await Cesium.Cesium3DTileset.fromUrl(
-        '/api/maps/v1/3dtiles/root.json',
+        `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
         { maximumScreenSpaceError: 8 }
       );
-    } catch(e) {
-      throw new Error('Failed to load 3D tiles: ' + e.message);
     }
     APP.viewer.scene.primitives.add(ts);
     APP.viewer.scene.globe.depthTestAgainstTerrain = false;
