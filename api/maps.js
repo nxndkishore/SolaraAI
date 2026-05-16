@@ -1,6 +1,3 @@
-// Vercel serverless proxy for Google Map Tiles API
-// Key lives in GOOGLE_MAPS_API_KEY env var — never in the browser
-
 export default async function handler(req, res) {
   const origin = req.headers.origin || '';
   const allowed = ['https://solarainanda.vercel.app', 'http://localhost:3000', 'http://localhost'];
@@ -19,9 +16,7 @@ export default async function handler(req, res) {
   const googleUrl = `https://tile.googleapis.com${path}${sep}key=${apiKey}`;
 
   try {
-    const response = await fetch(googleUrl, {
-      headers: { 'User-Agent': 'Solara/1.0' }
-    });
+    const response = await fetch(googleUrl, { headers: { 'User-Agent': 'Solara/1.0' } });
     const contentType = response.headers.get('content-type') || 'application/octet-stream';
     const buffer = await response.arrayBuffer();
     res.setHeader('Content-Type', contentType);
