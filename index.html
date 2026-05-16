@@ -715,11 +715,15 @@ async function initRoofViewer(key) {
     // globe:false causes black screens with Google 3D tiles due to depth sorting
     if (!APP.viewer) {
       try { Cesium.Ion.defaultAccessToken = undefined; } catch(e){}
+      // Disable Cesium Ion completely — we use Google tiles only
+      Cesium.Ion.defaultAccessToken = '';
       APP.viewer = new Cesium.Viewer('cesium-container', {
         baseLayerPicker: false, geocoder: false, homeButton: false,
         sceneModePicker: false, navigationHelpButton: false,
         animation: false, timeline: false, fullscreenButton: false,
-        infoBox: false, selectionIndicator: false
+        infoBox: false, selectionIndicator: false,
+        imageryProvider: false,
+        terrainProvider: new Cesium.EllipsoidTerrainProvider()
       });
       // Hide the globe visually — tiles replace it
       APP.viewer.scene.globe.show = false;
@@ -735,8 +739,6 @@ async function initRoofViewer(key) {
     }
 
     // Load Google Photorealistic 3D Tiles using session token auth
-    // Step 1: create a session token with the API key
-    // Step 2: use session token for tile requests (avoids key exposure in URLs)
     let ts;
     try {
       const sessionResp = await fetch(
@@ -744,35 +746,23 @@ async function initRoofViewer(key) {
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            mapType: 'photorealistic',
-            language: 'en-US',
-            region: 'US'
-          })
+          body: JSON.stringify({ mapType: 'photorealistic', language: 'en-US', region: 'US' })
         }
       );
       if (!sessionResp.ok) {
         const errText = await sessionResp.text();
-        throw new Error(`Session creation failed (${sessionResp.status}): ${errText}`);
+        throw new Error(`Session failed (${sessionResp.status}): ${errText}`);
       }
-      const sessionData = await sessionResp.json();
-      const sessionToken = sessionData.session;
-      if (!sessionToken) throw new Error('No session token returned from Google');
-
-      // Use session token to load tiles
+      const { session: sessionToken } = await sessionResp.json();
+      if (!sessionToken) throw new Error('No session token returned');
       ts = await Cesium.Cesium3DTileset.fromUrl(
         `https://tile.googleapis.com/v1/3dtiles/root.json?session=${sessionToken}&key=${key}`,
         { maximumScreenSpaceError: 8 }
       );
     } catch(sessionErr) {
-      console.warn('Session token approach failed:', sessionErr.message);
-      // Fallback: try direct key approach
+      console.warn('Session token failed:', sessionErr.message);
       try {
-        if (typeof Cesium.createGooglePhotorealistic3DTileset === 'function') {
-          ts = await Cesium.createGooglePhotorealistic3DTileset(key);
-        } else {
-          throw new Error('use fromUrl');
-        }
+        ts = await Cesium.createGooglePhotorealistic3DTileset(key);
       } catch(_) {
         ts = await Cesium.Cesium3DTileset.fromUrl(
           `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`,
@@ -825,8 +815,6 @@ async function initRoofViewer(key) {
       userMsg = 'API key denied (403) — enable Map Tiles API and ensure billing is active in Google Cloud Console';
     } else if (userMsg.includes('400') || userMsg.includes('INVALID_REQUEST')) {
       userMsg = 'Invalid API key (400) — check the key was copied correctly';
-    } else if (userMsg.includes('Session creation failed')) {
-      userMsg = userMsg; // show full session error
     }
     if (hint) hint.innerHTML = `<div class="alert alert-error">
       ${userMsg}
