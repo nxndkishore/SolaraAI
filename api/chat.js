@@ -7,7 +7,7 @@ const requests = new Map();
 export default async function handler(req, res) {
   // CORS — only allow from our own domain
   const origin = req.headers.origin || '';
-  const allowed = ['https://reonicnanda.vercel.app', 'http://localhost:3000'];
+  const allowed = ['https://solarainanda.vercel.app', 'http://localhost:3000'];
   if (allowed.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   }
