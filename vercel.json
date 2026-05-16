@@ -1,7 +1,6 @@
 {
   "version": 2,
   "routes": [
-    { "src": "/api/maps/(.*)", "dest": "/api/maps.js" },
     { "src": "/api/(.*)", "dest": "/api/$1" },
     { "src": "/(.*)", "dest": "/index.html" }
   ],

@@ -686,8 +686,8 @@ function render3D() {
 }
 
 function bind3D() {
-  // Google key is embedded and domain-restricted to reonicnanda.vercel.app
-  const googleKey = getKey('google') || '';
+  // Use localStorage key if present, otherwise use the default provided key
+  let googleKey = getKey('google') || 'AIzaSyATiLqnYSWe13x2T0IYL7TKZCgkay6FtRA';
   initRoofViewer(googleKey);
 }
 
@@ -740,8 +740,10 @@ async function initRoofViewer(key) {
 
     // Load Google Photorealistic 3D Tiles
     // Photorealistic 3D Tiles do not require a session.
-    // If a local key is provided, use it directly. Otherwise, use the Vercel proxy to hide the key.
-    const tsUrl = key ? `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}` : `/api/maps/v1/3dtiles/root.json`;
+    if (!key) {
+      throw new Error("No Google Maps API key provided. Add it in API Keys or Vercel env.");
+    }
+    const tsUrl = `https://tile.googleapis.com/v1/3dtiles/root.json?key=${key}`;
     const ts = await Cesium.Cesium3DTileset.fromUrl(tsUrl, {
       maximumScreenSpaceError: 8, showCreditsOnScreen: true
     });
